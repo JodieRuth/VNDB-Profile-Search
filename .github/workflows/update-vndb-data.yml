@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -43,8 +43,16 @@ jobs:
       - name: Build project
         run: npm run build
 
+      - name: Upload complete JSON artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vndb-prototype-json
+          path: public/data/vndb-prototype.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Commit updated generated data
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: chore: update VNDB generated data
-          file_pattern: public/data/vndb-prototype.json public/data/vndb-prototype.json.gz public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
+          file_pattern: public/data/vndb-prototype.json.gz public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
