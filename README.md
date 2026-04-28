@@ -1,10 +1,12 @@
 # VNDB Profile Search
 
+[使用说明 / How to use](HOW_TO_USE.md)
+
 ## 作者的话
 
 通过输入多个你喜爱的角色/VN，快速帮助你定位并寻找到所有类似的角色/VN。
 
-也支持使用Tag/Traits进行聚合搜索，快速查找你想要的作品中出场的特定角色，亦或者只是替代VNDB略微难用的网页页面。
+也支持使用Tag/Traits进行聚合搜索，快速查找你感兴趣的作品中出场的特定好球区角色，亦或者只是替代VNDB略微难用的网页页面。
 
 数据并不总是实时更新，也受制于VNDB本身用户填写内容的详细程度。
 
@@ -14,7 +16,7 @@ QQ小团体 1021295370
 
 这个README.MD文件的其余部分由大语言模型生成。
 
-仓库内置的VNDB相关翻译文件全部由ChatGPT生成。
+仓库内置的VNDB相关翻译文件全部由ChatGPT生成。由于数据量较大可能存在错译等，请及时报告。
 
 ## 这是什么
 
@@ -157,7 +159,7 @@ tag 检索则是你直接指定想要的 tag/trait，页面按照这些条件去
 - 投票数：VNDB 中的投票数量。
 - 标题：按标题排序。
 
-角色搜索还可以选择是否按关联 VN 平均分加权。开启后，来自高评分作品的角色会更容易排在前面。
+角色搜索还可以选择是否按关联 VN 平均分加权。开启后，来自高评分作品的角色会更容易排在前面。注意：由于VNDB部分作品的投票人数并不完全均等，可能产生意想不到的结果。
 
 ### 9. 分页和详情加载
 
@@ -218,3 +220,7 @@ npm run preview
 项目代码使用 MIT License。
 
 VNDB 数据请遵循 VNDB Data License。VNDB 的公开 dump 文档将 tag/trait 标为 Open Database License + Database Contents License，near-complete database dump 则以 VNDB Data License 或随包 README 为准。图片与外部内容的权利归各自权利人所有。
+
+## 其他说明
+
+[Notice](NOTICE.md)

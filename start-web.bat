@@ -3,21 +3,21 @@ setlocal
 cd /d "%~dp0"
 
 if not exist node_modules (
-  echo 正在安装依赖...
+  echo Installing dependencies...
   call npm install
   if errorlevel 1 goto failed
 )
 
-echo 正在启动网页服务器...
-echo 打开地址：http://localhost:5173/
-call npm run dev -- --host 0.0.0.0
+echo Starting web server...
+echo Open: http://localhost:5173/
+call npm run dev
 if errorlevel 1 goto failed
 
 goto end
 
 :failed
 echo.
-echo 启动失败，请检查 Node.js、npm 或上方错误信息。
+echo Startup failed. Please check Node.js, npm, or the error messages above.
 pause
 
 :end
