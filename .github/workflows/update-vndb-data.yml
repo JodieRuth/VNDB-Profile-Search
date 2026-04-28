@@ -54,5 +54,5 @@ jobs:
       - name: Commit updated generated data
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: chore: update VNDB generated data
+          commit_message: "chore: update VNDB generated data"
           file_pattern: public/data/vndb-prototype.json.gz public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
