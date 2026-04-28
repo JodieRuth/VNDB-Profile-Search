@@ -1,0 +1,50 @@
+name: Update VNDB data
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-vndb-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install dump extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+
+      - name: Download and extract VNDB dump
+        run: |
+          rm -rf .tmp-vndb-dump
+          mkdir -p .tmp-vndb-dump/extract
+          curl -L --retry 5 --retry-delay 20 --fail https://dl.vndb.org/dump/vndb-db-latest.tar.zst -o .tmp-vndb-dump/vndb-db-latest.tar.zst
+          tar -xf .tmp-vndb-dump/vndb-db-latest.tar.zst -C .tmp-vndb-dump/extract
+
+      - name: Generate local data
+        run: npm run generate:data
+
+      - name: Build project
+        run: npm run build
+
+      - name: Commit updated generated data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: chore: update VNDB generated data
+          file_pattern: public/data/vndb-prototype.json public/data/vndb-prototype.json.gz public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
