@@ -309,12 +309,100 @@ function metaIsAutoIgnored(metaItem?: Meta) {
   return Boolean(metaItem?.tech || metaItem?.blocked);
 }
 
-function searchVector(vector: Map<number, number>, limit: number, priorityIds: Set<number>, meta?: Map<number, Meta>) {
+function hashText(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function stableUnitRandom(seed: string, key: string) {
+  return (hashText(`${seed}|${key}`) + 1) / 4294967297;
+}
+
+function metaStratum(id: number, meta?: Map<number, Meta>) {
+  const item = meta?.get(id);
+  return String(item?.parents?.[0] ?? item?.group ?? item?.cat ?? id);
+}
+
+function inverseUsageWeight(id: number, usageCounts?: Map<number, number>) {
+  const usage = Math.max(0, usageCounts?.get(id) ?? 0);
+  return 1 / Math.log2(usage + 2);
+}
+
+function weightedChoice(entries: [number, number][], usageCounts: Map<number, number> | undefined, seed: string, round: number, stratum: string) {
+  let best = entries[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const entry of entries) {
+    const id = entry[0];
+    const weight = Math.max(inverseUsageWeight(id, usageCounts), 0.000001);
+    const random = Math.max(stableUnitRandom(seed, `${round}|${stratum}|${id}`), 0.000001);
+    const score = -Math.log(random) / weight;
+    if (score < bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function stratifiedRepeatedSample(pool: [number, number][], slots: number, meta: Map<number, Meta> | undefined, usageCounts: Map<number, number> | undefined, seed: string) {
+  const groups = new Map<string, [number, number][]>();
+  for (const entry of pool) {
+    const stratum = metaStratum(entry[0], meta);
+    groups.set(stratum, [...(groups.get(stratum) ?? []), entry]);
+  }
+  const totals = new Map<number, number>();
+  const rounds = 1024;
+  for (let round = 0; round < rounds; round += 1) {
+    const remaining = new Map([...groups.entries()].map(([key, entries]) => [key, [...entries]]));
+    const selected = new Set<number>();
+    while (selected.size < slots) {
+      const availableStrata = [...remaining.entries()]
+        .filter(([, entries]) => entries.length)
+        .map(([stratum]) => stratum)
+        .sort((a, b) => stableUnitRandom(seed, `${round}|${selected.size}|stratum|${a}`) - stableUnitRandom(seed, `${round}|${selected.size}|stratum|${b}`));
+      if (!availableStrata.length) break;
+      for (const stratum of availableStrata) {
+        if (selected.size >= slots) break;
+        const entries = remaining.get(stratum) ?? [];
+        const chosen = weightedChoice(entries, usageCounts, seed, round, stratum);
+        selected.add(chosen[0]);
+        remaining.set(stratum, entries.filter(([id]) => id !== chosen[0]));
+      }
+    }
+    for (const id of selected) totals.set(id, (totals.get(id) ?? 0) + 1);
+  }
+  return [...pool].sort((a, b) => {
+    const totalDiff = (totals.get(b[0]) ?? 0) - (totals.get(a[0]) ?? 0);
+    if (totalDiff) return totalDiff;
+    const usageDiff = inverseUsageWeight(b[0], usageCounts) - inverseUsageWeight(a[0], usageCounts);
+    if (usageDiff) return usageDiff;
+    return stableUnitRandom(seed, `final|${a[0]}`) - stableUnitRandom(seed, `final|${b[0]}`);
+  }).slice(0, slots);
+}
+
+function selectSearchEntries(entries: [number, number][], limit: number, meta?: Map<number, Meta>, usageCounts?: Map<number, number>) {
+  const count = Math.max(1, limit);
+  if (entries.length <= count) return entries;
+  const boundaryWeight = entries[count - 1][1];
+  const before = entries.filter(([, weight]) => weight > boundaryWeight);
+  const pool = entries.filter(([, weight]) => weight === boundaryWeight);
+  const slots = count - before.length;
+  if (slots <= 0 || pool.length - slots < 3) return entries.slice(0, count);
+  const seed = entries.map(([id, value]) => `${id}:${value}`).sort().join('|');
+  return [...before, ...stratifiedRepeatedSample(pool, slots, meta, usageCounts, seed)];
+}
+
+function searchVector(vector: Map<number, number>, limit: number, priorityIds: Set<number>, meta?: Map<number, Meta>, usageCounts?: Map<number, number>) {
   const entries = [...vector.entries()].sort((a, b) => b[1] - a[1]);
-  const limited = entries.filter(([id]) => {
+  const candidates = entries.filter(([id]) => {
     const metaItem = meta?.get(id);
     return !priorityIds.has(id) && !metaIsAutoIgnored(metaItem) && !metaItem?.sexual;
-  }).slice(0, Math.max(1, limit));
+  });
+  const limited = selectSearchEntries(candidates, limit, meta, usageCounts);
   const result = new Map<number, number>(limited);
   const topWeight = entries.reduce((max, [, value]) => Math.max(max, value), 1);
   for (const id of priorityIds) {
@@ -960,6 +1048,8 @@ function App() {
   const visibleSexualTraitIds = useMemo(() => new Set(data?.traits.filter((trait) => showSexual && trait.sexual).map((trait) => trait.id) ?? []), [data, showSexual]);
   const vnById = useMemo(() => new Map(data?.vns.map((vn) => [vn.id, vn]) ?? []), [data]);
   const characterById = useMemo(() => new Map(data?.characters.map((character) => [character.id, character]) ?? []), [data]);
+  const directTagUsageCounts = useMemo(() => directMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag'), [data, tagMeta]);
+  const directTraitUsageCounts = useMemo(() => directMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait'), [data, traitMeta]);
   const tagUsageCounts = useMemo(() => searchableMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag', showSexual, showSpoiler, (vn) => (vn.votes ?? 0) >= minVotes), [data, tagMeta, showSexual, showSpoiler, minVotes]);
   const traitUsageCounts = useMemo(() => searchableMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait', showSexual, showSpoiler, (character) => character.vns?.some(([id, role]) => (vnById.get(id)?.votes ?? 0) >= minVotes && roleAllowed(role, tagRoleFilter)) ?? false), [data, traitMeta, showSexual, showSpoiler, vnById, minVotes, tagRoleFilter]);
 
@@ -1018,8 +1108,8 @@ function App() {
 
   const activePriorityTags = useMemo(() => new Set([...priorityTags].filter((id) => vnProfile.has(id))), [priorityTags, vnProfile]);
   const activePriorityTraits = useMemo(() => new Set([...priorityTraits].filter((id) => characterProfile.has(id))), [priorityTraits, characterProfile]);
-  const activeVnProfile = useMemo(() => omitUnprioritizedSpecialTags(expandVectorParents(searchVector(vnProfile, tagLimit, activePriorityTags, tagMeta), tagMeta, showSpoiler, activePriorityTags), tagMeta, activePriorityTags), [vnProfile, tagLimit, activePriorityTags, tagMeta, showSpoiler]);
-  const activeCharacterProfile = useMemo(() => expandVectorParents(searchVector(characterProfile, traitLimit, activePriorityTraits, traitMeta), traitMeta, showSpoiler, activePriorityTraits), [characterProfile, traitLimit, activePriorityTraits, traitMeta, showSpoiler]);
+  const activeVnProfile = useMemo(() => omitUnprioritizedSpecialTags(expandVectorParents(searchVector(vnProfile, tagLimit, activePriorityTags, tagMeta, directTagUsageCounts), tagMeta, showSpoiler, activePriorityTags), tagMeta, activePriorityTags), [vnProfile, tagLimit, activePriorityTags, tagMeta, showSpoiler, directTagUsageCounts]);
+  const activeCharacterProfile = useMemo(() => expandVectorParents(searchVector(characterProfile, traitLimit, activePriorityTraits, traitMeta, directTraitUsageCounts), traitMeta, showSpoiler, activePriorityTraits), [characterProfile, traitLimit, activePriorityTraits, traitMeta, showSpoiler, directTraitUsageCounts]);
   const tagSearchTagGroups = useMemo(() => data ? metaSearchGroups(tagSearchTags, data.tags, tagMeta, showSexual, showSpoiler, false) : [], [data, tagSearchTags, tagMeta, showSexual, showSpoiler]);
   const tagSearchTraitGroups = useMemo(() => data ? metaSearchGroups(tagSearchTraits, data.traits, traitMeta, showSexual, showSpoiler) : [], [data, tagSearchTraits, traitMeta, showSexual, showSpoiler]);
   const tagSearchSexualTagIds = useMemo(() => selectedSexualAlternativeIds(tagSearchTagGroups, tagMeta), [tagSearchTagGroups, tagMeta]);
@@ -1503,6 +1593,23 @@ function compareMetaTreeName(a: Meta, b: Meta, showSexual: boolean, language: Me
 
 function metaChipClass(item: Meta) {
   return `chip ${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`;
+}
+
+function directMetaUsageCounts(items: Array<{ id: number; tags?: Pair[]; traits?: TraitPair[] }>, metas: Meta[], meta: Map<number, Meta>, field: 'tags' | 'traits', kind: 'tag' | 'trait') {
+  const direct = new Map<number, Set<number>>();
+  for (const item of items) {
+    const ids = new Set<number>();
+    for (const pair of item[field] ?? []) {
+      const metaItem = meta.get(pair[0]);
+      if (!metaItem || itemLie(pair, kind)) continue;
+      ids.add(pair[0]);
+    }
+    for (const id of ids) {
+      if (!direct.has(id)) direct.set(id, new Set());
+      direct.get(id)?.add(item.id);
+    }
+  }
+  return new Map(metas.map((metaItem) => [metaItem.id, direct.get(metaItem.id)?.size ?? 0]));
 }
 
 function searchableMetaUsageCounts(items: Array<{ id: number; votes?: number; vns?: [number, string, number][]; tags?: Pair[]; traits?: TraitPair[] }>, metas: Meta[], meta: Map<number, Meta>, field: 'tags' | 'traits', kind: 'tag' | 'trait', includeSexual: boolean, includeSpoiler: boolean, itemAllowed: (item: { id: number; votes?: number; vns?: [number, string, number][]; tags?: Pair[]; traits?: TraitPair[] }) => boolean) {

@@ -203,8 +203,8 @@ function vnResultScore(vn: Vn & RecRef) {
   return vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1);
 }
 
-function characterResultScore(character: Character & RecRef, preferAverage: boolean) {
-  return character.similarity * 100 + (preferAverage ? characterAverageScore(character) / 10 : character.score / 100);
+function characterResultScore(character: Character & RecRef & { consensusBonus?: number }, preferAverage: boolean) {
+  return character.similarity * 100 + (preferAverage ? characterAverageScore(character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8;
 }
 
 function itemTitle(item: Vn | Character) {
@@ -286,7 +286,7 @@ function sortVnRefs(items: Array<RecRef & Pick<Vn, 'rating' | 'votes'>>, sort: R
   });
 }
 
-function sortCharacterRefs(items: Array<RecRef & { character: Character; score: number }>, sort: ResultSort, direction: SortDirection, preferAverage: boolean) {
+function sortCharacterRefs(items: Array<RecRef & { character: Character; score: number; consensusBonus?: number }>, sort: ResultSort, direction: SortDirection, preferAverage: boolean) {
   return [...items].sort((a, b) => {
     if (sort === 'title') return compareSimilarityBucket(a, b) || sortTextByDirection(itemTitle(a.character), itemTitle(b.character), direction) || a.id - b.id;
     const left = sort === 'rating' ? characterRatingSortScore({ ...a.character, ...a }, preferAverage) : sort === 'votes' ? characterVotesSortScore({ ...a.character, ...a }, preferAverage) : sort === 'confidence' ? confidenceSortScore(a, characterResultScore({ ...a.character, ...a }, preferAverage)) : characterResultScore({ ...a.character, ...a }, preferAverage);
@@ -332,6 +332,23 @@ function topTagMatches<T extends RecRef>(candidates: T[], total: number, score: 
   return priorityBucketedResults(candidates, total, score);
 }
 
+function characterConsensusBonuses(candidates: Array<{ id: number; vector: Map<number, number> }>, sampleProfiles: Map<number, number>[]) {
+  if (!sampleProfiles.length || !candidates.length) return new Map<number, number>();
+  const totals = new Map<number, number>();
+  for (const profile of sampleProfiles) {
+    const ranked = candidates
+      .map((candidate) => ({ id: candidate.id, score: vectorScore(profile, candidate.vector) }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((a, b) => b.score - a.score || a.id - b.id);
+    const denominator = Math.max(1, ranked.length);
+    ranked.forEach((candidate, index) => {
+      const rankScore = (denominator - index) / denominator;
+      totals.set(candidate.id, (totals.get(candidate.id) ?? 0) + rankScore);
+    });
+  }
+  return new Map([...totals.entries()].map(([id, value]) => [id, value / sampleProfiles.length]));
+}
+
 function compute(params: ComputeParams) {
   if (!data) return { vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] };
   const selectedVnIdSet = new Set(params.selectedVnIds);
@@ -358,17 +375,25 @@ function compute(params: ComputeParams) {
     })
     .filter((vn) => vn.similarity > 0), activePriorityTags.size, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1));
 
-  const characterRecommendations = (!params.selectedCharacterIds.length || !activeCharacterProfile.size) ? [] : topRecommendations(data.characters
-    .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
-    .map((character) => {
-      const vector = makeVector(character.traits, traitMeta, 'trait', params.showSpoiler, true, activePriorityTraits);
-      const priorityMatched = priorityMatch(activePriorityTraits, vector);
-      const priorityTotal = activePriorityTraits.size;
-      const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
-      const similarity = vectorScore(activeCharacterProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
-      return { id: character.id, similarity, overlap: overlap(activeCharacterProfile, vector), priorityMatched, priorityTotal, priorityConfidence, score: character.score, character };
-    })
-    .filter((character) => character.similarity > 0), activePriorityTraits.size, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100));
+  const characterRecommendations = (!params.selectedCharacterIds.length || !activeCharacterProfile.size) ? [] : (() => {
+    const sampleProfiles = params.selectedCharacterIds
+      .map((id) => data?.characters.find((character) => character.id === id))
+      .filter(Boolean)
+      .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', params.showSpoiler, true, activePriorityTraits));
+    const candidates = data.characters
+      .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
+      .map((character) => {
+        const vector = makeVector(character.traits, traitMeta, 'trait', params.showSpoiler, true, activePriorityTraits);
+        const priorityMatched = priorityMatch(activePriorityTraits, vector);
+        const priorityTotal = activePriorityTraits.size;
+        const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
+        const similarity = vectorScore(activeCharacterProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
+        return { id: character.id, similarity, overlap: overlap(activeCharacterProfile, vector), priorityMatched, priorityTotal, priorityConfidence, score: character.score, character, vector };
+      })
+      .filter((character) => character.similarity > 0);
+    const consensusBonuses = characterConsensusBonuses(candidates, sampleProfiles);
+    return topRecommendations(candidates.map((character) => ({ ...character, consensusBonus: consensusBonuses.get(character.id) ?? 0 })), activePriorityTraits.size, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8);
+  })();
 
   const tagSearchVnCandidates = !params.tagSearchTagGroups.length ? [] : data.vns
     .filter((vn) => vn.votes >= params.minVotes)
