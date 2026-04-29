@@ -651,6 +651,40 @@ const characters = [...charMap.values()].map((character) => {
   };
 });
 
+function sortedUsageIndex(map) {
+  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([id, itemIds]) => [id, [...itemIds].sort((a, b) => a - b)]);
+}
+
+function buildUsageIndex(items, metas, field, kind, noSpoiler) {
+  const metaById = new Map(metas.map((meta) => [meta.id, meta]));
+  const direct = new Map();
+  for (const item of items) {
+    const ids = new Set();
+    for (const pair of item[field] ?? []) {
+      const meta = metaById.get(pair[0]);
+      if (!meta) continue;
+      const lie = kind === 'tag' ? pair[3] : pair[2];
+      if (lie) continue;
+      const spoiler = kind === 'tag' ? pair[2] : pair[1];
+      if (noSpoiler && Math.max(spoiler ?? 0, meta.defaultspoil ?? 0) > 0) continue;
+      ids.add(pair[0]);
+    }
+    for (const id of ids) {
+      const itemIds = direct.get(id) ?? new Set();
+      itemIds.add(item.id);
+      direct.set(id, itemIds);
+    }
+  }
+  return sortedUsageIndex(direct);
+}
+
+const usageIndex = {
+  directTagVns: buildUsageIndex(vns, [...tagMeta.values()], 'tags', 'tag', false),
+  directTagVnsNoSpoiler: buildUsageIndex(vns, [...tagMeta.values()], 'tags', 'tag', true),
+  directTraitCharacters: buildUsageIndex(characters, [...traitMeta.values()], 'traits', 'trait', false),
+  directTraitCharactersNoSpoiler: buildUsageIndex(characters, [...traitMeta.values()], 'traits', 'trait', true)
+};
+
 function stringifyIndented(value, indent) {
   return JSON.stringify(value, null, 2).split('\n').map((line, index) => index === 0 ? line : `${indent}${line}`).join('\n');
 }
@@ -693,6 +727,7 @@ const payload = {
   source: 'VNDB near-complete database dump, complete local export',
   limits: {},
   stats: { vns: vns.length, characters: characters.length, tags: tagMeta.size, traits: traitMeta.size, blockedTags: blockedTagIds.size, producers: producerMap.size },
+  usageIndex,
   vns,
   characters,
   tags: [...tagMeta.values()],

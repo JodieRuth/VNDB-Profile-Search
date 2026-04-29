@@ -5,7 +5,7 @@ type Producer = { id: number; name: string; nameEncoded?: boolean; original: str
 type Vn = { id: number; title: string; titleEncoded?: boolean; original: string | null; originalEncoded?: boolean; olang: string | null; rating: number; average: number; votes: number; image: string | null; aliases: string; aliasesEncoded?: boolean; developers: Producer[]; publishers: Producer[]; search: string; searchEncoded?: boolean; tags: Pair[]; relations: VnRelation[] };
 type Character = { id: number; name: string; nameEncoded?: boolean; original: string | null; originalEncoded?: boolean; image: string | null; sex: string | null; gender: string | null; blood: string | null; birthday: string | null; bust: number | null; waist: number | null; hip: number | null; score: number; search: string; searchEncoded?: boolean; aliases: string[]; aliasesEncoded?: boolean; vns: [number, string, number][]; traits: TraitPair[] };
 type Meta = { id: number; cat?: string; group?: number | null; defaultspoil?: number; sexual: boolean; tech?: boolean; searchable: boolean; applicable: boolean; name: string; nameEncoded: boolean; parents?: number[]; blocked?: boolean };
-type Data = { generatedAt: string; source: string; limits: Record<string, number>; stats: Record<string, number>; vns: Vn[]; characters: Character[]; tags: Meta[]; traits: Meta[] };
+type Data = { generatedAt: string; source: string; limits: Record<string, number>; stats: Record<string, number>; usageIndex?: { directTagVns?: [number, number[]][]; directTraitCharacters?: [number, number[]][] }; vns: Vn[]; characters: Character[]; tags: Meta[]; traits: Meta[] };
 type CharacterRoleFilter = { primary: boolean; main: boolean; side: boolean; appears: boolean };
 type ResultSort = 'relevance' | 'rating' | 'votes' | 'title' | 'confidence';
 type SortDirection = 'desc' | 'asc';
@@ -14,6 +14,9 @@ type MixedRef = { vnId: number; characterId: number; similarity: number; priorit
 type MetaSearchGroupRef = { selectedId: number; alternatives: number[] };
 type WorkerResultVariant = { vnRecommendations: RecRef[]; characterRecommendations: RecRef[]; tagSearchVnResults: RecRef[]; tagSearchCharacterResults: RecRef[]; mixedTagResults: MixedRef[] };
 type WorkerResult = { spoilerOff: WorkerResultVariant; spoilerOn: WorkerResultVariant };
+type TagSearchIndex = { vectors: Map<number, number>[]; postings: Map<number, number[]> };
+type TraitSearchIndex = { vectors: Map<number, number>[]; postings: Map<number, number[]> };
+
 type ComputeParams = {
   selectedVnIds: number[];
   selectedCharacterIds: number[];
@@ -23,6 +26,10 @@ type ComputeParams = {
   activeCharacterProfileSpoilerOn: [number, number][];
   activePriorityTags: number[];
   activePriorityTraits: number[];
+  tagLimit: number;
+  traitLimit: number;
+  profileSampleRounds: number;
+  includeSpoiler: boolean;
   tagSearchTags: number[];
   tagSearchTraits: number[];
   tagSearchTagGroupsSpoilerOff: MetaSearchGroupRef[];
@@ -46,6 +53,11 @@ let data: Data | null = null;
 let tagMeta = new Map<number, Meta>();
 let traitMeta = new Map<number, Meta>();
 let vnById = new Map<number, Vn>();
+let characterById = new Map<number, Character>();
+let tagSearchIndexSpoilerOff: TagSearchIndex | null = null;
+let tagSearchIndexSpoilerOn: TagSearchIndex | null = null;
+let traitSearchIndexSpoilerOff: TraitSearchIndex | null = null;
+let traitSearchIndexSpoilerOn: TraitSearchIndex | null = null;
 
 const normalizeTitle = (value: string) => value.toLocaleLowerCase().replace(/[\s\-_~:：!！?？()[\]（）【】「」『』,，.。]/g, '');
 
@@ -59,6 +71,36 @@ function commonPrefixLength(a: string, b: string) {
 
 function producerIds(vn: Vn) {
   return new Set([...vn.developers, ...vn.publishers].map((producer) => producer.id));
+}
+
+function characterDeveloperIds(character: Character) {
+  const ids = new Set<number>();
+  for (const [vnId] of character.vns) {
+    const vn = vnById.get(vnId);
+    if (!vn) continue;
+    for (const developer of vn.developers) ids.add(developer.id);
+  }
+  return ids;
+}
+
+function selectedCharacterDeveloperIds(characterIds: number[]) {
+  const ids = new Set<number>();
+  for (const id of characterIds) {
+    const character = characterById.get(id);
+    if (!character) continue;
+    for (const developerId of characterDeveloperIds(character)) ids.add(developerId);
+  }
+  return ids;
+}
+
+function characterCompanyBoost(character: Character, referenceDeveloperIds: Set<number>) {
+  if (!referenceDeveloperIds.size) return 1;
+  for (const [vnId] of character.vns) {
+    const vn = vnById.get(vnId);
+    if (!vn) continue;
+    if (vn.developers.some((developer) => referenceDeveloperIds.has(developer.id))) return 1.33;
+  }
+  return 1;
 }
 
 function isSameCompanyPrefixDuplicate(candidate: Vn, samples: Vn[]) {
@@ -108,6 +150,46 @@ function makeVector(items: Pair[] | TraitPair[], meta: Map<number, Meta>, kind: 
   return vector;
 }
 
+function addPosting(postings: Map<number, number[]>, metaId: number, index: number) {
+  const list = postings.get(metaId) ?? [];
+  list.push(index);
+  postings.set(metaId, list);
+}
+
+function buildTagSearchIndex(includeSpoiler: boolean): TagSearchIndex {
+  if (!data) return { vectors: [], postings: new Map() };
+  const vectors: Map<number, number>[] = [];
+  const postings = new Map<number, number[]>();
+  const sexualIds = new Set([...tagMeta.values()].filter((item) => item.sexual).map((item) => item.id));
+  for (let index = 0; index < data.vns.length; index += 1) {
+    const vn = data.vns[index];
+    const vector = makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, sexualIds, true);
+    vectors[index] = vector;
+    for (const id of vector.keys()) addPosting(postings, id, index);
+  }
+  return { vectors, postings };
+}
+
+function buildTraitSearchIndex(includeSpoiler: boolean): TraitSearchIndex {
+  if (!data) return { vectors: [], postings: new Map() };
+  const vectors: Map<number, number>[] = [];
+  const postings = new Map<number, number[]>();
+  const sexualIds = new Set([...traitMeta.values()].filter((item) => item.sexual).map((item) => item.id));
+  for (let index = 0; index < data.characters.length; index += 1) {
+    const character = data.characters[index];
+    const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, sexualIds);
+    vectors[index] = vector;
+    for (const id of vector.keys()) addPosting(postings, id, index);
+  }
+  return { vectors, postings };
+}
+
+function collectCandidateIndexes(groups: MetaSearchGroupRef[], postings: Map<number, number[]>) {
+  const indexes = new Set<number>();
+  for (const group of groups) for (const id of group.alternatives) for (const index of postings.get(id) ?? []) indexes.add(index);
+  return indexes;
+}
+
 function metaIsAutoIgnored(metaItem?: Meta) {
   return Boolean(metaItem?.tech || metaItem?.blocked);
 }
@@ -118,6 +200,89 @@ function omitUnprioritizedSpecialTags(vector: Map<number, number>, meta: Map<num
     if (!metaIsAutoIgnored(meta.get(id)) || priorityIds.has(id)) result.set(id, value);
   }
   return result;
+}
+
+function mergeVectors(vectors: Map<number, number>[]) {
+  const merged = new Map<number, number>();
+  for (const vector of vectors) for (const [id, value] of vector) merged.set(id, (merged.get(id) ?? 0) + value);
+  return merged;
+}
+
+function expandVectorParents(vector: Map<number, number>, meta: Map<number, Meta>, allowedSexualIds?: Set<number>) {
+  const result = new Map(vector);
+  for (const [id, value] of vector) {
+    const metaItem = meta.get(id);
+    if (!metaItem) continue;
+    for (const parentId of metaItem.parents ?? []) {
+      const parent = meta.get(parentId);
+      if (!parent || !canUseMetaForSearch(parent, 0, true, allowedSexualIds)) continue;
+      result.set(parentId, Math.max(result.get(parentId) ?? 0, value * 0.55));
+    }
+  }
+  return result;
+}
+
+function searchVector(vector: Map<number, number>, limit: number, meta: Map<number, Meta>, allowedSexualIds?: Set<number>) {
+  return sampledSearchVector(vector, limit, meta, new Set(), 0, allowedSexualIds);
+}
+
+function hashText(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function stableUnitRandom(seed: string, key: string) {
+  return (hashText(`${seed}|${key}`) + 1) / 4294967297;
+}
+
+function sampledSearchVector(vector: Map<number, number>, limit: number, meta: Map<number, Meta>, priorityIds: Set<number>, round: number, allowedSexualIds?: Set<number>) {
+  const expanded = expandVectorParents(vector, meta, allowedSexualIds);
+  const count = Math.max(1, limit);
+  const entries = [...expanded.entries()].sort((a, b) => b[1] - a[1]);
+  const candidates = entries.filter(([id]) => !priorityIds.has(id) && !metaIsAutoIgnored(meta.get(id)) && !meta.get(id)?.sexual);
+  const seed = entries.map(([id, value]) => `${id}:${value}`).join('|');
+  const selected = new Set<number>();
+  const pool = [...candidates];
+  while (selected.size < count && pool.length) {
+    let bestIndex = 0;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < pool.length; index += 1) {
+      const [id, value] = pool[index];
+      const weight = Math.max(value, 0.000001);
+      const random = Math.max(stableUnitRandom(seed, `${round}|${selected.size}|${id}`), 0.000001);
+      const score = -Math.log(random) / weight;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    selected.add(pool[bestIndex][0]);
+    pool.splice(bestIndex, 1);
+  }
+  if (round <= 0 || candidates.length <= count) for (const [id] of candidates.slice(0, count)) selected.add(id);
+  const result = new Map<number, number>();
+  for (const [id, value] of entries) if (selected.has(id)) result.set(id, value);
+  const topWeight = entries.reduce((max, [, value]) => Math.max(max, value), 1);
+  for (const id of priorityIds) if (expanded.has(id)) result.set(id, Math.max(expanded.get(id) ?? 0, topWeight * 2));
+  return result;
+}
+
+function buildActiveVnProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0) {
+  const selected = selectedIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
+  if (!selected.length) return new Map<number, number>();
+  const direct = mergeVectors(selected.map((vn) => makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, false, priorityIds)));
+  return sampledSearchVector(omitUnprioritizedSpecialTags(direct, tagMeta, priorityIds), limit, tagMeta, priorityIds, round, priorityIds);
+}
+
+function buildActiveCharacterProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0) {
+  const selected = selectedIds.map((id) => characterById.get(id)).filter(Boolean) as Character[];
+  if (!selected.length) return new Map<number, number>();
+  const direct = mergeVectors(selected.map((character) => makeVector(character.traits, traitMeta, 'trait', includeSpoiler, false, priorityIds)));
+  return sampledSearchVector(direct, limit, traitMeta, priorityIds, round, priorityIds);
 }
 
 function priorityMatch(query: Set<number>, candidate: Map<number, number>) {
@@ -210,8 +375,8 @@ function vnResultScore(vn: Vn & RecRef) {
   return vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1);
 }
 
-function characterResultScore(character: Character & RecRef & { consensusBonus?: number }, preferAverage: boolean) {
-  return character.similarity * 100 + (preferAverage ? characterAverageScore(character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8;
+function characterResultScore(character: Character & RecRef & { consensusBonus?: number; companyBoost?: number }, preferAverage: boolean) {
+  return (character.similarity * 100 + (preferAverage ? characterAverageScore(character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8) * (character.companyBoost ?? 1);
 }
 
 function itemTitle(item: Vn | Character) {
@@ -293,7 +458,7 @@ function sortVnRefs(items: Array<RecRef & Pick<Vn, 'rating' | 'votes'>>, sort: R
   });
 }
 
-function sortCharacterRefs(items: Array<RecRef & { character: Character; score: number; consensusBonus?: number }>, sort: ResultSort, direction: SortDirection, preferAverage: boolean) {
+function sortCharacterRefs(items: Array<RecRef & { character: Character; score: number; consensusBonus?: number; companyBoost?: number }>, sort: ResultSort, direction: SortDirection, preferAverage: boolean) {
   return [...items].sort((a, b) => {
     if (sort === 'title') return compareSimilarityBucket(a, b) || sortTextByDirection(itemTitle(a.character), itemTitle(b.character), direction) || a.id - b.id;
     const left = sort === 'rating' ? characterRatingSortScore({ ...a.character, ...a }, preferAverage) : sort === 'votes' ? characterVotesSortScore({ ...a.character, ...a }, preferAverage) : sort === 'confidence' ? confidenceSortScore(a, characterResultScore({ ...a.character, ...a }, preferAverage)) : characterResultScore({ ...a.character, ...a }, preferAverage);
@@ -360,13 +525,115 @@ function emptyWorkerResultVariant(): WorkerResultVariant {
   return { vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] };
 }
 
-function computeVariant(params: ComputeParams, includeSpoiler: boolean): WorkerResultVariant {
+function profileSignature(profile: Map<number, number>) {
+  return [...profile.entries()].sort((a, b) => a[0] - b[0]).map(([id, value]) => `${id}:${value}`).join('|');
+}
+
+function aggregateRefs<T extends RecRef>(lists: T[][], score: (item: T) => number) {
+  const merged = new Map<number, T & { runs: number }>();
+  for (const list of lists) {
+    for (const item of list) {
+      const current = merged.get(item.id);
+      if (!current) merged.set(item.id, { ...item, runs: 1 });
+      else {
+        current.similarity += item.similarity;
+        current.overlap += item.overlap;
+        current.priorityMatched += item.priorityMatched;
+        current.priorityConfidence += item.priorityConfidence;
+        current.runs += 1;
+      }
+    }
+  }
+  return [...merged.values()].map((item) => ({
+    ...item,
+    similarity: item.similarity / item.runs,
+    overlap: item.overlap / item.runs,
+    priorityMatched: item.priorityMatched / item.runs,
+    priorityConfidence: item.priorityConfidence / item.runs
+  })).sort((a, b) => score(b as T) - score(a as T)).map(({ runs, ...item }) => item as T);
+}
+
+function postProgress(requestId: number, phase: 'randomize' | 'search' | 'fit', current: number, total: number) {
+  self.postMessage({ type: 'progress', requestId, phase, current, total });
+}
+
+function buildDistinctProfiles(rounds: number, requestId: number, buildProfile: (round: number) => Map<number, number>) {
+  const profiles: Map<number, number>[] = [];
+  const signatures = new Set<string>();
+  for (let round = 0; round < rounds; round += 1) {
+    const profile = buildProfile(round);
+    if (!profile.size) break;
+    const signature = profileSignature(profile);
+    if (signatures.has(signature)) break;
+    signatures.add(signature);
+    profiles.push(profile);
+    postProgress(requestId, 'randomize', profiles.length, rounds);
+  }
+  if (profiles.length < rounds) postProgress(requestId, 'randomize', profiles.length || 1, profiles.length || 1);
+  return profiles;
+}
+
+function computeVnRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedVnIdSet: Set<number>, selectedVns: Vn[], activePriorityTags: Set<number>, requestId: number): Array<RecRef & Pick<Vn, 'rating' | 'votes'>> {
+  if (!params.selectedVnIds.length) return [];
+  const rounds = Math.max(1, Math.floor(params.profileSampleRounds || 1));
+  const activeVnProfiles = buildDistinctProfiles(rounds, requestId, (round) => buildActiveVnProfile(params.selectedVnIds, includeSpoiler, activePriorityTags, params.tagLimit, round));
+  const lists: Array<Array<RecRef & Pick<Vn, 'rating' | 'votes'>>> = [];
+  for (let index = 0; index < activeVnProfiles.length; index += 1) {
+    const activeVnProfile = activeVnProfiles[index];
+    postProgress(requestId, 'search', index + 1, activeVnProfiles.length);
+    lists.push(topRecommendations(data!.vns
+      .filter((vn) => !selectedVnIdSet.has(vn.id) && vn.votes >= params.minVotes && !isSameCompanyPrefixDuplicate(vn, selectedVns))
+      .map((vn) => {
+        const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, activePriorityTags), tagMeta, activePriorityTags);
+        const priorityMatched = priorityMatch(activePriorityTags, vector);
+        const priorityTotal = activePriorityTags.size;
+        const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
+        const similarity = vectorScore(activeVnProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
+        return { id: vn.id, similarity, overlap: overlap(activeVnProfile, vector), priorityMatched, priorityTotal, priorityConfidence, rating: vn.rating, votes: vn.votes };
+      })
+      .filter((vn) => vn.similarity > 0), activePriorityTags.size, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1)));
+  }
+  postProgress(requestId, 'fit', lists.length || 1, lists.length || 1);
+  return aggregateRefs(lists, (vn) => vn.similarity * 100 + (vn as RecRef & { rating?: number; votes?: number }).rating! / 10 + Math.log10((vn as RecRef & { votes?: number }).votes || 1));
+}
+
+function computeCharacterRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedCharacterIdSet: Set<number>, activePriorityTraits: Set<number>, requestId: number) {
+  if (!params.selectedCharacterIds.length) return [];
+  const rounds = Math.max(1, Math.floor(params.profileSampleRounds || 1));
+  const sampleProfiles = params.selectedCharacterIds
+    .map((id) => characterById.get(id))
+    .filter(Boolean)
+    .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits));
+  const activeCharacterProfiles = buildDistinctProfiles(rounds, requestId, (round) => buildActiveCharacterProfile(params.selectedCharacterIds, includeSpoiler, activePriorityTraits, params.traitLimit, round));
+  const referenceDeveloperIds = selectedCharacterDeveloperIds(params.selectedCharacterIds);
+  const lists: Array<Array<RecRef & { score: number; character: Character; vector: Map<number, number>; consensusBonus?: number; companyBoost?: number }>> = [];
+  for (let index = 0; index < activeCharacterProfiles.length; index += 1) {
+    const activeCharacterProfile = activeCharacterProfiles[index];
+    postProgress(requestId, 'search', index + 1, activeCharacterProfiles.length);
+    const candidates = data!.characters
+      .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
+      .map((character) => {
+        const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits);
+        const priorityMatched = priorityMatch(activePriorityTraits, vector);
+        const priorityTotal = activePriorityTraits.size;
+        const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
+        const similarity = vectorScore(activeCharacterProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
+        const companyBoost = characterCompanyBoost(character, referenceDeveloperIds);
+        return { id: character.id, similarity, overlap: overlap(activeCharacterProfile, vector), priorityMatched, priorityTotal, priorityConfidence, score: character.score, character, vector, companyBoost };
+      })
+      .filter((character) => character.similarity > 0);
+    const consensusBonuses = characterConsensusBonuses(candidates, sampleProfiles);
+    lists.push(topRecommendations(candidates.map((character) => ({ ...character, consensusBonus: consensusBonuses.get(character.id) ?? 0 })), activePriorityTraits.size, (character) => characterResultScore({ ...character.character, ...character }, params.preferCharacterAverage)));
+  }
+  postProgress(requestId, 'fit', lists.length || 1, lists.length || 1);
+  return aggregateRefs(lists, (character) => characterResultScore({ ...(character as RecRef & { character?: Character }).character!, ...character }, params.preferCharacterAverage));
+}
+
+function computeVariant(params: ComputeParams, includeSpoiler: boolean, requestId: number): WorkerResultVariant {
   if (!data) return emptyWorkerResultVariant();
   const selectedVnIdSet = new Set(params.selectedVnIds);
   const selectedCharacterIdSet = new Set(params.selectedCharacterIds);
   const selectedVns = params.selectedVnIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
-  const activeVnProfile = new Map(includeSpoiler ? params.activeVnProfileSpoilerOn : params.activeVnProfileSpoilerOff);
-  const activeCharacterProfile = new Map(includeSpoiler ? params.activeCharacterProfileSpoilerOn : params.activeCharacterProfileSpoilerOff);
   const activePriorityTags = new Set(params.activePriorityTags);
   const activePriorityTraits = new Set(params.activePriorityTraits);
   const tagSearchTagGroups = includeSpoiler ? params.tagSearchTagGroupsSpoilerOn : params.tagSearchTagGroupsSpoilerOff;
@@ -376,63 +643,40 @@ function computeVariant(params: ComputeParams, includeSpoiler: boolean): WorkerR
   const tagSearchSexualTagIds = new Set(includeSpoiler ? params.tagSearchSexualTagIdsSpoilerOn : params.tagSearchSexualTagIdsSpoilerOff);
   const tagSearchSexualTraitIds = new Set(includeSpoiler ? params.tagSearchSexualTraitIdsSpoilerOn : params.tagSearchSexualTraitIdsSpoilerOff);
 
-  const vnRecommendations = (!params.selectedVnIds.length || !activeVnProfile.size) ? [] : topRecommendations(data.vns
-    .filter((vn) => !selectedVnIdSet.has(vn.id) && vn.votes >= params.minVotes && !isSameCompanyPrefixDuplicate(vn, selectedVns))
-    .map((vn) => {
-      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, activePriorityTags), tagMeta, activePriorityTags);
-      const priorityMatched = priorityMatch(activePriorityTags, vector);
-      const priorityTotal = activePriorityTags.size;
-      const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
-      const similarity = vectorScore(activeVnProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
-      return { id: vn.id, similarity, overlap: overlap(activeVnProfile, vector), priorityMatched, priorityTotal, priorityConfidence, rating: vn.rating, votes: vn.votes };
-    })
-    .filter((vn) => vn.similarity > 0), activePriorityTags.size, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1));
+  const vnRecommendations = computeVnRecommendations(params, includeSpoiler, selectedVnIdSet, selectedVns, activePriorityTags, requestId);
+  const characterRecommendations = computeCharacterRecommendations(params, includeSpoiler, selectedCharacterIdSet, activePriorityTraits, requestId);
 
-  const characterRecommendations = (!params.selectedCharacterIds.length || !activeCharacterProfile.size) ? [] : (() => {
-    const sampleProfiles = params.selectedCharacterIds
-      .map((id) => data?.characters.find((character) => character.id === id))
-      .filter(Boolean)
-      .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits));
-    const candidates = data.characters
-      .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
-      .map((character) => {
-        const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits);
-        const priorityMatched = priorityMatch(activePriorityTraits, vector);
-        const priorityTotal = activePriorityTraits.size;
-        const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
-        const similarity = vectorScore(activeCharacterProfile, vector) * (priorityTotal ? 0.65 + priorityConfidence * 0.35 : 1);
-        return { id: character.id, similarity, overlap: overlap(activeCharacterProfile, vector), priorityMatched, priorityTotal, priorityConfidence, score: character.score, character, vector };
-      })
-      .filter((character) => character.similarity > 0);
-    const consensusBonuses = characterConsensusBonuses(candidates, sampleProfiles);
-    return topRecommendations(candidates.map((character) => ({ ...character, consensusBonus: consensusBonuses.get(character.id) ?? 0 })), activePriorityTraits.size, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8);
-  })();
-
-  const tagSearchVnCandidates = !tagSearchTagGroups.length ? [] : data.vns
-    .filter((vn) => vn.votes >= params.minVotes)
-    .map((vn) => {
-      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, tagSearchSexualTagIds, true), tagMeta, tagSearchTagAlternativeIds);
+  const tagSearchIndex = includeSpoiler ? tagSearchIndexSpoilerOn : tagSearchIndexSpoilerOff;
+  const tagSearchVnCandidates = !tagSearchTagGroups.length || !tagSearchIndex ? [] : [...collectCandidateIndexes(tagSearchTagGroups, tagSearchIndex.postings)]
+    .map((index) => {
+      const vn = data!.vns[index];
+      if (vn.votes < params.minVotes) return null;
+      const vector = omitUnprioritizedSpecialTags(tagSearchIndex.vectors[index], tagMeta, tagSearchTagAlternativeIds);
       const priorityMatched = groupedPriorityMatch(tagSearchTagGroups, vector);
       const priorityTotal = tagSearchTagGroups.length;
       const priorityConfidence = groupedMetaConfidence(tagSearchTagGroups, vector);
       const similarity = groupedMetaScore(tagSearchTagGroups, vector) * (0.65 + priorityConfidence * 0.35);
-      return { id: vn.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, rating: vn.rating, votes: vn.votes };
+      return similarity > 0 ? { id: vn.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, rating: vn.rating, votes: vn.votes } : null;
     })
-    .filter((vn) => vn.similarity > 0);
+    .filter(Boolean)
+    .map((vn) => vn as RecRef & { rating: number; votes: number });
 
   const tagSearchVnResults = topTagMatches(tagSearchVnCandidates, tagSearchTagGroups.length, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1));
 
-  const tagSearchCharacterCandidates = !tagSearchTraitGroups.length ? [] : data.characters
-    .filter((character) => characterHasQualifiedVn(character, params.minVotes, params.tagRoleFilter))
-    .map((character) => {
-      const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, tagSearchSexualTraitIds);
+  const traitSearchIndex = includeSpoiler ? traitSearchIndexSpoilerOn : traitSearchIndexSpoilerOff;
+  const tagSearchCharacterCandidates = !tagSearchTraitGroups.length || !traitSearchIndex ? [] : [...collectCandidateIndexes(tagSearchTraitGroups, traitSearchIndex.postings)]
+    .map((index) => {
+      const character = data!.characters[index];
+      if (!characterHasQualifiedVn(character, params.minVotes, params.tagRoleFilter)) return null;
+      const vector = traitSearchIndex.vectors[index];
       const priorityMatched = groupedPriorityMatch(tagSearchTraitGroups, vector);
       const priorityTotal = tagSearchTraitGroups.length;
       const priorityConfidence = groupedMetaConfidence(tagSearchTraitGroups, vector);
       const similarity = groupedMetaScore(tagSearchTraitGroups, vector) * (0.65 + priorityConfidence * 0.35);
-      return { id: character.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, score: character.score, character };
+      return similarity > 0 ? { id: character.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, score: character.score, character } : null;
     })
-    .filter((character) => character.similarity > 0);
+    .filter(Boolean)
+    .map((character) => character as RecRef & { score: number; character: Character });
 
   const tagSearchCharacterResults = topTagMatches(tagSearchCharacterCandidates, tagSearchTraitGroups.length, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100));
 
@@ -468,8 +712,9 @@ function computeVariant(params: ComputeParams, includeSpoiler: boolean): WorkerR
   };
 }
 
-function compute(params: ComputeParams): WorkerResult {
-  return { spoilerOff: computeVariant(params, false), spoilerOn: computeVariant(params, true) };
+function compute(params: ComputeParams, requestId: number): WorkerResult {
+  const variant = computeVariant(params, params.includeSpoiler, requestId);
+  return params.includeSpoiler ? { spoilerOff: emptyWorkerResultVariant(), spoilerOn: variant } : { spoilerOff: variant, spoilerOn: emptyWorkerResultVariant() };
 }
 
 self.onmessage = (event: MessageEvent<WorkerInput>) => {
@@ -478,11 +723,16 @@ self.onmessage = (event: MessageEvent<WorkerInput>) => {
     tagMeta = new Map(data.tags.map((tag) => [tag.id, tag]));
     traitMeta = new Map(data.traits.map((trait) => [trait.id, trait]));
     vnById = new Map(data.vns.map((vn) => [vn.id, vn]));
+    characterById = new Map(data.characters.map((character) => [character.id, character]));
+    tagSearchIndexSpoilerOff = buildTagSearchIndex(false);
+    tagSearchIndexSpoilerOn = buildTagSearchIndex(true);
+    traitSearchIndexSpoilerOff = buildTraitSearchIndex(false);
+    traitSearchIndexSpoilerOn = buildTraitSearchIndex(true);
     self.postMessage({ type: 'ready' });
     return;
   }
   try {
-    self.postMessage({ type: 'result', requestId: event.data.requestId, result: compute(event.data.params) });
+    self.postMessage({ type: 'result', requestId: event.data.requestId, result: compute(event.data.params, event.data.requestId) });
   } catch (reason) {
     self.postMessage({ type: 'error', requestId: event.data.requestId, error: String(reason) });
   }

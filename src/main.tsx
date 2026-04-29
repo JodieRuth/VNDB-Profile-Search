@@ -1,10 +1,11 @@
-import React, { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Component, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import './styles.css';
 
 type Pair = [number, number, number, number];
 type TraitPair = [number, number, number];
-type VnRelation = [number, string, number];
+type VnRelation = [number, VnRelationType, number];
+type VnRelationType = 'seq' | 'preq' | 'set' | 'alt' | 'char' | 'side' | 'par' | 'ser' | 'fan' | 'orig' | string;
 type Producer = { id: number; name: string; nameEncoded?: boolean; original: string | null; originalEncoded?: boolean; type: string; lang: string };
 type Vn = {
   id: number;
@@ -80,6 +81,12 @@ type Data = {
   source: string;
   limits: Record<string, number>;
   stats: Record<string, number>;
+  usageIndex?: {
+    directTagVns?: [number, number[]][];
+    directTagVnsNoSpoiler?: [number, number[]][];
+    directTraitCharacters?: [number, number[]][];
+    directTraitCharactersNoSpoiler?: [number, number[]][];
+  };
   vns: Vn[];
   characters: Character[];
   tags: Meta[];
@@ -110,13 +117,24 @@ type RecommendationRef = { id: number; similarity: number; overlap: number; prio
 type MixedTagRef = { vnId: number; characterId: number; similarity: number; priorityMatched: number; priorityTotal: number; priorityConfidence: number };
 type WorkerResultVariant = { vnRecommendations: RecommendationRef[]; characterRecommendations: RecommendationRef[]; tagSearchVnResults: RecommendationRef[]; tagSearchCharacterResults: RecommendationRef[]; mixedTagResults: MixedTagRef[] };
 type WorkerResult = { spoilerOff: WorkerResultVariant; spoilerOn: WorkerResultVariant };
+type WorkerProgressPhase = 'randomize' | 'search' | 'fit';
+type WorkerProgress = { phase: WorkerProgressPhase; current: number; total: number };
+type WorkerProgressState = Partial<Record<WorkerProgressPhase, { current: number; total: number }>>;
 type MetaSearchGroup = { selectedId: number; alternatives: Set<number> };
+type MetaFilterClass = 'sexual' | 'spoiler' | 'blocked' | 'technical' | 'normal';
 type DataManifest = { dataPath?: string; path?: string; sha256?: string; generatedAt?: string; buildDateUtc8?: string; size?: number };
+type LoadStageKey = 'loadingStageReady' | 'loadingStageReadManifest' | 'loadingStagePrepareDownload' | 'loadingStageCompressedDownloadComplete' | 'loadingStageDownloadGzip' | 'loadingStageReadPlainText' | 'loadingStageDecompressGzip' | 'loadingStageParseJsonPrepare' | 'loadingStageParseJson' | 'loadingStageDecodeFields' | 'loadingStageRestoreState' | 'loadingStageCommitData' | 'loadingStagePrepareIndex' | 'loadingStageComplete' | 'errorRenderMain' | 'errorRuntime';
+type LoadProgressDetail = { loaded: number; total: number; speed: number };
+type LoadState = { progress: number; stage: LoadStageKey; detail?: LoadProgressDetail | null };
+type LoadProgressUpdate = { progress: number; stage: LoadStageKey; detail?: LoadProgressDetail | null };
+type LoadError = { message: string; stack?: string; stage: LoadStageKey | string; progress: number; detail?: LoadProgressDetail | null };
 type PersistedState = {
   version: number;
   mode: Mode;
-  query: string;
-  submittedQuery: string;
+  vnQuery: string;
+  characterQuery: string;
+  vnSubmittedQuery: string;
+  characterSubmittedQuery: string;
   selectedVnIds: number[];
   selectedCharacterIds: number[];
   showSexual: boolean;
@@ -128,6 +146,7 @@ type PersistedState = {
   minVotes: number;
   tagLimit: number;
   traitLimit: number;
+  profileSampleRounds: number;
   preferCharacterAverage: boolean;
   tagRoleFilter: CharacterRoleFilter;
   resultSort: ResultSort;
@@ -140,27 +159,454 @@ type PersistedState = {
   tagSearchTagIds: number[];
   tagSearchTraitIds: number[];
 };
+type MetaSelectorPersistedState = { query: string; openNodeIds: number[]; openGroupLabels: string[]; scrollTop: number; height: number };
 
 const REPOSITORY_URL = 'https://github.com/JodieRuth/VNDB-Profile-Search';
 const README_URL = `${REPOSITORY_URL}#readme`;
+const ISSUE_URL = `${REPOSITORY_URL}/issues/new`;
 const GITHUB_REPO_API = 'https://api.github.com/repos/JodieRuth/VNDB-Profile-Search';
 const DATA_MANIFEST_PATH = './data/manifest.json';
 const STORAGE_KEY = 'vndb-profile-search-state-v1';
+const META_SELECTOR_STORAGE_PREFIX = 'vndb-profile-search-meta-selector-v1';
 const PERSISTED_STATE_VERSION = 1;
+const TAG_TREE_GROUP_ROOT_IDS = new Set([1, 20, 22, 24, 674]);
 const emptyWorkerResultVariant = (): WorkerResultVariant => ({ vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] });
 const emptyWorkerResult = (): WorkerResult => ({ spoilerOff: emptyWorkerResultVariant(), spoilerOn: emptyWorkerResultVariant() });
 
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
   zh: {
-    source: '基于 VNDB 数据源', themeDark: '切换黑夜模式', themeLight: '切换白天模式', vnMode: 'VN 检索', characterMode: '角色检索', tagMode: '标签检索', showR18: '显示 R18 标签名', allowSpoiler: '允许剧透标签', metaLanguage: 'tag/traits', uiLanguage: '语言', searchVn: '搜索 VN', searchCharacter: '搜索角色', searchLocal: '搜索本地索引', localResults: '本地搜索结果', selectedSamples: '已选择样本', profile: '合成画像', vnRecommendations: '相似 VN 推荐', characterRecommendations: '相似角色推荐', tagResults: 'tag/traits 检索结果', candidates: '候选数量', perPage: '每页', currentPage: '当前第', page: '页', sort: '排序', direction: '方向', minVotes: '最低票数', tagLimit: '搜索前 N 个 tag', traitLimit: '搜索前 N 个 trait', preferAverage: '按关联 VN 平均分加权', roleType: '角色类型', primary: '主角', main: '主要角色', side: '配角', appears: '仅登场', previous: '上一页', next: '下一页', previousItem: '上一个', nextItem: '下一个', loadPage: '载入当前页详情', choosePage: '请选择排序与分页后载入当前页详情。', license: 'VNDB 数据遵循 VNDB Data License（Open Database License / Database Contents License）；图片与外部详情仍以 VNDB 原站记录为准。', relevance: '相关值', confidence: '置信度', rating: 'VN rating', votes: '投票数', title: '标题', desc: '上到下', asc: '下到上', clear: '清空', tagPanelTitle: 'VN tag', traitPanelTitle: '角色 traits', tagPanelDesc: '选择作品 tag；技术 tag 和 Character/Scene tag 只有被选中时才参与检索。', traitPanelDesc: '选择角色 trait；与 VN tag 同时选择时输出作品 + 角色组合。', tagFilter: '检索 VN tag', traitFilter: '检索角色 trait', showBlockedTags: '显示 Character/Scene 标签', showTechnicalTags: '显示技术性标签', loading: '正在加载本地 VNDB 索引……', computing: '正在计算候选结果……', selectedMeta: '已选中', parentMeta: '父级', projectLinks: '项目链接', readmeTitle: '使用说明', githubStarFallback: 'Star', githubStarHelp: '如果这个项目对你有帮助，请考虑点个 star', statsVn: 'VN', statsCharacters: '角色', statsMeta: '标签数量', statsProducers: '厂商', metaLanguageLabel: 'tag/trait 显示语言', uiLanguageLabel: '语言设置', dataLastUpdated: '数据最后更新时间'
+    source: '基于 VNDB 数据源',
+    themeDark: '切换黑夜模式',
+    themeLight: '切换白天模式',
+    vnMode: 'VN 检索',
+    characterMode: '角色检索',
+    tagMode: '标签检索',
+    showR18: '显示 R18 标签名',
+    allowSpoiler: '允许剧透标签',
+    metaLanguage: 'tag/traits',
+    uiLanguage: '语言',
+    searchVn: '搜索 VN',
+    searchCharacter: '搜索角色',
+    searchLocal: '搜索本地索引',
+    localResults: '本地搜索结果',
+    selectedSamples: '已选参考条目',
+    profile: '合成画像',
+    vnRecommendations: '相似 VN 推荐',
+    characterRecommendations: '相似角色推荐',
+    tagResults: 'tag/traits 检索结果',
+    candidates: '候选数量',
+    perPage: '每页',
+    currentPage: '当前第',
+    page: '页',
+    sort: '排序',
+    direction: '方向',
+    minVotes: '最低票数',
+    profileSampleRounds: '搜索次数',
+    tagLimit: '搜索前 N 个 tag',
+    traitLimit: '搜索前 N 个 trait',
+    preferAverage: '按关联 VN 平均分加权',
+    roleType: '角色类型',
+    characterAppearances: '登场作品',
+    relatedVns: '相关作品',
+    noRecommendationResults: '没有找到符合当前条件的候选结果。请尝试降低最低票数、放宽角色类型，或减少重点 tag/trait 后重新查看。',
+    primary: '主要角色',
+    main: '核心角色',
+    side: '次要角色/配角',
+    appears: '仅登场/提及',
+    previous: '上一页',
+    next: '下一页',
+    previousItem: '上一个',
+    nextItem: '下一个',
+    loadPage: '启动搜索',
+    choosePage: '请设置条件后点击启动搜索。',
+    license: 'VNDB 数据遵循 VNDB Data License（Open Database License / Database Contents License）；图片与外部详情仍以 VNDB 原站记录为准。',
+    relevance: '相关值',
+    confidence: '置信度',
+    rating: 'VN rating',
+    votes: '投票数',
+    title: '标题',
+    desc: '上到下',
+    asc: '下到上',
+    clear: '清空',
+    collapseAll: '收起所有',
+    tagPanelTitle: 'VN tag',
+    traitPanelTitle: '角色 traits',
+    tagPanelDesc: '选择作品 tag；与角色 traits 同时选择时输出作品 + 角色组合。',
+    traitPanelDesc: '选择角色 trait；与 VN tag 同时选择时输出作品 + 角色组合。',
+    tagFilter: '检索 VN tag',
+    traitFilter: '检索角色 trait',
+    showBlockedTags: '显示 Character/Scene 标签',
+    showTechnicalTags: '显示技术性标签',
+    loading: '正在加载本地 VNDB 索引……',
+    computing: '正在计算候选结果……',
+    randomizingProfile: '正在随机化画像……',
+    fittingResults: '正在拟合搜索结果……',
+    selectedMeta: '已选中',
+    parentMeta: '父级',
+    projectLinks: '项目链接',
+    readmeTitle: '使用说明',
+    githubStarFallback: 'Star',
+    githubStarHelp: '如果这个项目对你有帮助，请考虑点个 star',
+    statsVn: 'VN',
+    statsCharacters: '角色',
+    statsMeta: '标签数量',
+    statsProducers: '厂商',
+    metaLanguageLabel: 'tag/trait 显示语言',
+    uiLanguageLabel: '语言设置',
+    dataLastUpdated: '数据最后更新时间',
+    resizeListHeight: '拖动调整列表高度',
+    resizeListHeightHelp: '拖动上方按钮可调整高度',
+    loadingDetailLoaded: '已获取',
+    loadingDetailTotal: '总大小',
+    loadingDetailSpeed: '速度',
+    loadingUnknown: '未知',
+    loadingCalculating: '计算中',
+    loadingStageReady: '准备加载本地 VNDB 索引',
+    loadingStageReadManifest: '读取数据清单',
+    loadingStagePrepareDownload: '准备下载压缩数据',
+    loadingStageCompressedDownloadComplete: '压缩数据下载完成',
+    loadingStageDownloadGzip: '下载 gzip 压缩数据',
+    loadingStageReadPlainText: '读取未压缩数据文本',
+    loadingStageDecompressGzip: '解压 gzip 数据',
+    loadingStageParseJsonPrepare: '解压完成，准备解析 JSON',
+    loadingStageParseJson: '解析 JSON 数据',
+    loadingStageDecodeFields: '解码压缩字段与多语言文本',
+    loadingStageRestoreState: '恢复上次选择与筛选状态',
+    loadingStageCommitData: '提交数据并初始化界面',
+    loadingStagePrepareIndex: '准备本地索引与搜索界面',
+    loadingStageComplete: '加载完成',
+    errorTitle: '加载失败',
+    errorDescription: '网页在加载本地 VNDB 索引时发生错误。你可以先尝试刷新页面；如果问题持续出现，请提交 issue，并附上下面的错误信息。',
+    errorReload: '刷新页面',
+    errorSubmitIssue: '提交 issue',
+    errorStage: '失败阶段',
+    errorProgress: '加载进度',
+    errorLoaded: '已获取',
+    errorTotal: '总大小',
+    errorSpeed: '下载速度',
+    errorRenderMain: '渲染主界面',
+    errorRuntime: '网页运行时',
+    errorUnsupportedGzip: '当前浏览器不支持 gzip 解压',
+    errorDataManifestPathMissing: '数据清单缺少数据文件路径',
+    errorDataFileReadFailed: '数据文件读取失败',
+    r18Hidden: 'R18 已隐藏',
+    addSample: '加入参考',
+    remove: '移除',
+    producers: '厂商',
+    detailsLoading: '详情加载中',
+    detailsFailed: '详情失败',
+    similarity: '相似',
+    overlap: '重合',
+    priorityConfidence: '重点置信',
+    associationScore: '关联分',
+    vnAverage: 'VN均分',
+    averageWeighted: '均分加权',
+    combinedSimilarity: '组合相似',
+    metaCategoryContent: '内容',
+    metaCategoryTechnical: '技术',
+    metaCategoryOther: '其他',
+    metaCategoryContentTooltip: '作品内容相关标签，用于描述题材、设定、剧情元素与表现形式。',
+    metaCategoryR18Tooltip: 'R18 相关标签。默认仅用于展示，不参与搜索；只有被选为重点标签时才参与搜索。',
+    metaCategoryTechnicalTooltip: '技术性标签。默认仅展示，不参与搜索；只有被选为重点标签时才参与搜索。',
+    metaCategoryOtherTooltip: '其他未归入主要分类的标签。'
   },
   ja: {
-    source: 'VNDB データソースに基づく', themeDark: 'ダークモードへ', themeLight: 'ライトモードへ', vnMode: 'VN検索', characterMode: 'キャラクター検索', tagMode: 'タグ検索', showR18: 'R18 タグ名', allowSpoiler: 'ネタバレ許可', metaLanguage: 'tag/traits', uiLanguage: '言語', searchVn: 'VN を検索', searchCharacter: 'キャラクターを検索', searchLocal: 'ローカル検索', localResults: 'ローカル検索結果', selectedSamples: '選択したサンプル', profile: '合成プロファイル', vnRecommendations: '類似 VN 推薦', characterRecommendations: '類似キャラクター推薦', tagResults: 'tag/traits 検索結果', candidates: '候補数', perPage: '1ページ', currentPage: '現在', page: 'ページ', sort: 'ソート', direction: '方向', minVotes: '最低投票数', tagLimit: '検索 tag 数', traitLimit: '検索 trait 数', preferAverage: '関連 VN 平均点で重み付け', roleType: '役割', primary: '主人公', main: 'メイン', side: 'サブ', appears: '登場のみ', previous: '前へ', next: '次へ', previousItem: '前の項目', nextItem: '次の項目', loadPage: '現在ページの詳細を読み込む', choosePage: 'ソートとページを選択してから詳細を読み込んでください。', license: 'VNDB データは VNDB Data License（Open Database License / Database Contents License）に従います。画像と外部詳細は VNDB 原本を基準とします。', relevance: '関連度', confidence: '信頼度', rating: 'VN rating', votes: '投票数', title: 'タイトル', desc: '降順', asc: '昇順', clear: 'クリア', tagPanelTitle: 'VN tag', traitPanelTitle: 'キャラクター traits', tagPanelDesc: '作品 tag を選択します。technical tag と Character/Scene tag は選択時のみ検索に使われます。', traitPanelDesc: 'キャラクター trait を選択します。VN tag と同時に選ぶと VN + キャラクターの組み合わせを出力します。', tagFilter: 'VN tag を検索', traitFilter: 'キャラクター trait を検索', showBlockedTags: 'Character/Scene tag', showTechnicalTags: 'technical tag', loading: 'ローカル VNDB 索引を読み込み中……', computing: '候補を計算中……', selectedMeta: '選択中', parentMeta: '親', projectLinks: 'プロジェクトリンク', readmeTitle: '使い方', githubStarFallback: 'Star', githubStarHelp: 'このプロジェクトが役に立った場合は star をご検討ください', statsVn: 'VN', statsCharacters: 'キャラクター', statsMeta: 'タグ数', statsProducers: '制作者', metaLanguageLabel: 'tag/trait 表示言語', uiLanguageLabel: '言語設定', dataLastUpdated: 'データ最終更新時刻'
+    source: 'VNDB データソースに基づく',
+    themeDark: 'ダークモードへ',
+    themeLight: 'ライトモードへ',
+    vnMode: 'VN検索',
+    characterMode: 'キャラクター検索',
+    tagMode: 'タグ検索',
+    showR18: 'R18 タグ名',
+    allowSpoiler: 'ネタバレ許可',
+    metaLanguage: 'tag/traits',
+    uiLanguage: '言語',
+    searchVn: 'VN を検索',
+    searchCharacter: 'キャラクターを検索',
+    searchLocal: 'ローカル検索',
+    localResults: 'ローカル検索結果',
+    selectedSamples: '選択中の参考項目',
+    profile: '合成プロファイル',
+    vnRecommendations: '類似 VN 推薦',
+    characterRecommendations: '類似キャラクター推薦',
+    tagResults: 'tag/traits 検索結果',
+    candidates: '候補数',
+    perPage: '1ページ',
+    currentPage: '現在',
+    page: 'ページ',
+    sort: 'ソート',
+    direction: '方向',
+    minVotes: '最低票数',
+    profileSampleRounds: '検索回数',
+    tagLimit: '検索 tag 数',
+    traitLimit: '検索 trait 数',
+    preferAverage: '関連 VN 平均点で重み付け',
+    roleType: '役割',
+    characterAppearances: '登場作品',
+    relatedVns: '関連作品',
+    noRecommendationResults: '現在の条件に一致する候補は見つかりませんでした。最低投票数、役割条件、重点 tag/trait を緩めてから再確認してください。',
+    primary: '主要キャラクター',
+    main: '中核キャラクター',
+    side: '副次キャラクター/脇役',
+    appears: '登場/言及のみ',
+    previous: '前へ',
+    next: '次へ',
+    previousItem: '前の項目',
+    nextItem: '次の項目',
+    loadPage: '検索開始',
+    choosePage: '条件を設定して検索開始を押してください。',
+    license: 'VNDB データは VNDB Data License（Open Database License / Database Contents License）に従います。画像と外部詳細は VNDB 原本を基準とします。',
+    relevance: '関連度',
+    confidence: '信頼度',
+    rating: 'VN rating',
+    votes: '投票数',
+    title: 'タイトル',
+    desc: '降順',
+    asc: '昇順',
+    clear: 'クリア',
+    collapseAll: 'すべて閉じる',
+    tagPanelTitle: 'VN tag',
+    traitPanelTitle: 'キャラクター traits',
+    tagPanelDesc: '作品 tag を選択します。キャラクター traits と同時に選ぶと VN + キャラクターの組み合わせを出力します。',
+    traitPanelDesc: 'キャラクター trait を選択します。VN tag と同時に選ぶと VN + キャラクターの組み合わせを出力します。',
+    tagFilter: 'VN tag を検索',
+    traitFilter: 'キャラクター trait を検索',
+    showBlockedTags: 'Character/Scene tag',
+    showTechnicalTags: 'technical tag',
+    loading: 'ローカル VNDB 索引を読み込み中……',
+    computing: '候補を計算中……',
+    randomizingProfile: '画像をランダム化中……',
+    fittingResults: '検索結果をフィット中……',
+    selectedMeta: '選択中',
+    parentMeta: '親',
+    projectLinks: 'プロジェクトリンク',
+    readmeTitle: '使い方',
+    githubStarFallback: 'Star',
+    githubStarHelp: 'このプロジェクトが役に立った場合は star をご検討ください',
+    statsVn: 'VN',
+    statsCharacters: 'キャラクター',
+    statsMeta: 'タグ数',
+    statsProducers: '制作者',
+    metaLanguageLabel: 'tag/trait 表示言語',
+    uiLanguageLabel: '言語設定',
+    dataLastUpdated: 'データ最終更新時刻',
+    resizeListHeight: 'ドラッグしてリストの高さを調整',
+    resizeListHeightHelp: '上のボタンをドラッグして高さを調整できます',
+    loadingDetailLoaded: '取得済み',
+    loadingDetailTotal: '合計サイズ',
+    loadingDetailSpeed: '速度',
+    loadingUnknown: '不明',
+    loadingCalculating: '計算中',
+    loadingStageReady: 'ローカル VNDB 索引の読み込みを準備中',
+    loadingStageReadManifest: 'データマニフェストを読み込み中',
+    loadingStagePrepareDownload: '圧縮データのダウンロードを準備中',
+    loadingStageCompressedDownloadComplete: '圧縮データのダウンロードが完了しました',
+    loadingStageDownloadGzip: 'gzip 圧縮データをダウンロード中',
+    loadingStageReadPlainText: '未圧縮データテキストを読み込み中',
+    loadingStageDecompressGzip: 'gzip データを解凍中',
+    loadingStageParseJsonPrepare: '解凍完了、JSON 解析を準備中',
+    loadingStageParseJson: 'JSON データを解析中',
+    loadingStageDecodeFields: '圧縮フィールドと多言語テキストをデコード中',
+    loadingStageRestoreState: '前回の選択とフィルター状態を復元中',
+    loadingStageCommitData: 'データを反映して画面を初期化中',
+    loadingStagePrepareIndex: 'ローカル索引と検索画面を準備中',
+    loadingStageComplete: '読み込み完了',
+    errorTitle: '読み込みに失敗しました',
+    errorDescription: 'ローカル VNDB 索引の読み込み中にエラーが発生しました。まずページの再読み込みを試してください。問題が続く場合は、下のエラー情報を添えて issue を作成してください。',
+    errorReload: 'ページを再読み込み',
+    errorSubmitIssue: 'issue を作成',
+    errorStage: '失敗した段階',
+    errorProgress: '読み込み進捗',
+    errorLoaded: '取得済み',
+    errorTotal: '合計サイズ',
+    errorSpeed: 'ダウンロード速度',
+    errorRenderMain: 'メイン画面を描画中',
+    errorRuntime: 'ページ実行時',
+    errorUnsupportedGzip: '現在のブラウザーは gzip 解凍に対応していません',
+    errorDataManifestPathMissing: 'データマニフェストにデータファイルのパスがありません',
+    errorDataFileReadFailed: 'データファイルの読み込みに失敗しました',
+    r18Hidden: 'R18 非表示',
+    addSample: '参考に追加',
+    remove: '削除',
+    producers: '制作者',
+    detailsLoading: '詳細を読み込み中',
+    detailsFailed: '詳細の読み込みに失敗',
+    similarity: '類似度',
+    overlap: '重複',
+    priorityConfidence: '重点信頼度',
+    associationScore: '関連度',
+    vnAverage: 'VN平均点',
+    averageWeighted: '平均点で重み付け',
+    combinedSimilarity: '組み合わせ類似度',
+    metaCategoryContent: '内容',
+    metaCategoryTechnical: '技術',
+    metaCategoryOther: 'その他',
+    metaCategoryContentTooltip: '作品内容に関するタグです。題材、設定、ストーリー要素、表現形式を表します。',
+    metaCategoryR18Tooltip: 'R18 関連タグです。通常は表示のみで検索には使われず、重点タグとして選択した場合のみ検索に使われます。',
+    metaCategoryTechnicalTooltip: '技術的なタグです。通常は表示のみで検索には使われず、重点タグとして選択した場合のみ検索に使われます。',
+    metaCategoryOtherTooltip: '主要カテゴリに分類されていないその他のタグです。'
   },
   en: {
-    source: 'Based on VNDB data source', themeDark: 'Switch to dark mode', themeLight: 'Switch to light mode', vnMode: 'VN search', characterMode: 'Character search', tagMode: 'Tag search', showR18: 'R18 names', allowSpoiler: 'Spoilers', metaLanguage: 'tag/traits', uiLanguage: 'Language', searchVn: 'Search VN', searchCharacter: 'Search character', searchLocal: 'Search local index', localResults: 'Local search results', selectedSamples: 'Selected samples', profile: 'Combined profile', vnRecommendations: 'Similar VN recommendations', characterRecommendations: 'Similar character recommendations', tagResults: 'tag/traits results', candidates: 'Candidates', perPage: 'Per page', currentPage: 'Page', page: '', sort: 'Sort', direction: 'Direction', minVotes: 'Minimum votes', tagLimit: 'Top N tags', traitLimit: 'Top N traits', preferAverage: 'Weight by related VN average', roleType: 'Character role', primary: 'Primary', main: 'Main', side: 'Side', appears: 'Appears only', previous: 'Previous', next: 'Next', previousItem: 'Previous item', nextItem: 'Next item', loadPage: 'Load current page details', choosePage: 'Choose sorting and page, then load current page details.', license: 'VNDB data follows the VNDB Data License (Open Database License / Database Contents License); images and external details remain subject to VNDB records.', relevance: 'Relevance', confidence: 'Confidence', rating: 'VN rating', votes: 'Votes', title: 'Title', desc: 'Descending', asc: 'Ascending', clear: 'Clear', tagPanelTitle: 'VN tag', traitPanelTitle: 'Character traits', tagPanelDesc: 'Select VN tags. Technical and Character/Scene tags only participate when selected.', traitPanelDesc: 'Select character traits. Selecting both VN tags and traits outputs VN + character pairs.', tagFilter: 'Search VN tag', traitFilter: 'Search character trait', showBlockedTags: 'Character/Scene tag', showTechnicalTags: 'technical tags', loading: 'Loading local VNDB index……', computing: 'Computing candidates……', selectedMeta: 'Selected', parentMeta: 'Parent', projectLinks: 'Project links', readmeTitle: 'Usage guide', githubStarFallback: 'Star', githubStarHelp: 'If this project helps you, please consider giving it a star', statsVn: 'VN', statsCharacters: 'Characters', statsMeta: 'Tags', statsProducers: 'Producers', metaLanguageLabel: 'tag/trait display language', uiLanguageLabel: 'Language settings', dataLastUpdated: 'Data last updated'
+    source: 'Based on VNDB data source',
+    themeDark: 'Switch to dark mode',
+    themeLight: 'Switch to light mode',
+    vnMode: 'VN search',
+    characterMode: 'Character search',
+    tagMode: 'Tag search',
+    showR18: 'R18 names',
+    allowSpoiler: 'Spoilers',
+    metaLanguage: 'tag/traits',
+    uiLanguage: 'Language',
+    searchVn: 'Search VN',
+    searchCharacter: 'Search character',
+    searchLocal: 'Search local index',
+    localResults: 'Local search results',
+    selectedSamples: 'Selected reference items',
+    profile: 'Combined profile',
+    vnRecommendations: 'Similar VN recommendations',
+    characterRecommendations: 'Similar character recommendations',
+    tagResults: 'tag/traits results',
+    candidates: 'Candidates',
+    perPage: 'Per page',
+    currentPage: 'Page',
+    page: '',
+    sort: 'Sort',
+    direction: 'Direction',
+    minVotes: 'Min votes',
+    profileSampleRounds: 'Search runs',
+    tagLimit: 'Top N tags',
+    traitLimit: 'Top N traits',
+    preferAverage: 'Weight by related VN average',
+    roleType: 'Character role',
+    characterAppearances: 'Appears in',
+    relatedVns: 'Related VNs',
+    noRecommendationResults: 'No candidates match the current conditions. Try lowering minimum votes, relaxing role filters, or reducing priority tags/traits.',
+    primary: 'Major character',
+    main: 'Core character',
+    side: 'Minor/supporting character',
+    appears: 'Appears/mentioned only',
+    previous: 'Previous',
+    next: 'Next',
+    previousItem: 'Previous item',
+    nextItem: 'Next item',
+    loadPage: 'Start search',
+    choosePage: 'Set conditions, then start search.',
+    license: 'VNDB data follows the VNDB Data License (Open Database License / Database Contents License); images and external details remain subject to VNDB records.',
+    relevance: 'Relevance',
+    confidence: 'Confidence',
+    rating: 'VN rating',
+    votes: 'Votes',
+    title: 'Title',
+    desc: 'Descending',
+    asc: 'Ascending',
+    clear: 'Clear',
+    collapseAll: 'Collapse all',
+    tagPanelTitle: 'VN tag',
+    traitPanelTitle: 'Character traits',
+    tagPanelDesc: 'Select VN tags. Selecting character traits at the same time outputs VN + character pairs.',
+    traitPanelDesc: 'Select character traits. Selecting both VN tags and traits outputs VN + character pairs.',
+    tagFilter: 'Search VN tag',
+    traitFilter: 'Search character trait',
+    showBlockedTags: 'Character/Scene tag',
+    showTechnicalTags: 'technical tags',
+    loading: 'Loading local VNDB index……',
+    computing: 'Computing candidates……',
+    fittingResults: 'Fitting search results……',
+    selectedMeta: 'Selected',
+    parentMeta: 'Parent',
+    projectLinks: 'Project links',
+    readmeTitle: 'Usage guide',
+    githubStarFallback: 'Star',
+    githubStarHelp: 'If this project helps you, please consider giving it a star',
+    statsVn: 'VN',
+    statsCharacters: 'Characters',
+    statsMeta: 'Tags',
+    statsProducers: 'Producers',
+    metaLanguageLabel: 'tag/trait display language',
+    uiLanguageLabel: 'Language settings',
+    dataLastUpdated: 'Data last updated',
+    resizeListHeight: 'Drag to resize list height',
+    resizeListHeightHelp: 'Drag the button above to adjust the height',
+    loadingDetailLoaded: 'Loaded',
+    loadingDetailTotal: 'Total size',
+    loadingDetailSpeed: 'Speed',
+    loadingUnknown: 'Unknown',
+    loadingCalculating: 'Calculating',
+    loadingStageReady: 'Preparing local VNDB index',
+    loadingStageReadManifest: 'Reading data manifest',
+    loadingStagePrepareDownload: 'Preparing compressed data download',
+    loadingStageCompressedDownloadComplete: 'Compressed data download complete',
+    loadingStageDownloadGzip: 'Downloading gzip-compressed data',
+    loadingStageReadPlainText: 'Reading uncompressed data text',
+    loadingStageDecompressGzip: 'Decompressing gzip data',
+    loadingStageParseJsonPrepare: 'Decompression complete, preparing to parse JSON',
+    loadingStageParseJson: 'Parsing JSON data',
+    loadingStageDecodeFields: 'Decoding compressed fields and multilingual text',
+    loadingStageRestoreState: 'Restoring previous selections and filters',
+    loadingStageCommitData: 'Committing data and initializing interface',
+    loadingStagePrepareIndex: 'Preparing local index and search interface',
+    loadingStageComplete: 'Loading complete',
+    errorTitle: 'Loading failed',
+    errorDescription: 'An error occurred while loading the local VNDB index. Try refreshing the page first. If the problem persists, submit an issue and include the error information below.',
+    errorReload: 'Refresh page',
+    errorSubmitIssue: 'Submit issue',
+    errorStage: 'Failed stage',
+    errorProgress: 'Loading progress',
+    errorLoaded: 'Loaded',
+    errorTotal: 'Total size',
+    errorSpeed: 'Download speed',
+    errorRenderMain: 'Rendering main interface',
+    errorRuntime: 'Page runtime',
+    errorUnsupportedGzip: 'This browser does not support gzip decompression',
+    errorDataManifestPathMissing: 'The data manifest does not include a data file path',
+    errorDataFileReadFailed: 'Data file read failed',
+    r18Hidden: 'R18 hidden',
+    addSample: 'Add as reference',
+    remove: 'Remove',
+    producers: 'Producers',
+    detailsLoading: 'Loading details',
+    detailsFailed: 'Details failed',
+    similarity: 'Similarity',
+    overlap: 'Overlap',
+    priorityConfidence: 'Priority confidence',
+    associationScore: 'Association score',
+    vnAverage: 'VN average',
+    averageWeighted: 'Average weighted',
+    combinedSimilarity: 'Combined similarity',
+    metaCategoryContent: 'Content',
+    metaCategoryTechnical: 'Technical',
+    metaCategoryOther: 'Other',
+    metaCategoryContentTooltip: 'Content tags describe themes, settings, story elements, and presentation style.',
+    metaCategoryR18Tooltip: 'R18 tags are shown by default but do not participate in search unless selected as priority tags.',
+    metaCategoryTechnicalTooltip: 'Technical tags are shown by default but do not participate in search unless selected as priority tags.',
+    metaCategoryOtherTooltip: 'Other tags that are not grouped into the main categories.'
   }
 };
+
+const isUiLanguage = (value: unknown): value is UiLanguage => value === 'zh' || value === 'ja' || value === 'en';
+const storedUiLanguage = (): UiLanguage => {
+  try {
+    const textValue = window.localStorage.getItem(STORAGE_KEY);
+    if (!textValue) return 'zh';
+    const value = JSON.parse(textValue) as Partial<PersistedState>;
+    return isUiLanguage(value.uiLanguage) ? value.uiLanguage : 'zh';
+  } catch {
+    return 'zh';
+  }
+};
+const systemPrefersDarkMode = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+const storedDarkMode = () => {
+  try {
+    const textValue = window.localStorage.getItem(STORAGE_KEY);
+    if (!textValue) return systemPrefersDarkMode();
+    const value = JSON.parse(textValue) as Partial<PersistedState>;
+    return typeof value.darkMode === 'boolean' ? value.darkMode : systemPrefersDarkMode();
+  } catch {
+    return systemPrefersDarkMode();
+  }
+};
+const localizedText = (key: string, language: UiLanguage) => UI_TEXT[language][key] ?? UI_TEXT.zh[key] ?? key;
+const localizedStage = (stage: string, language: UiLanguage) => localizedText(stage, language);
 
 const text = (value: string) => value.trim().toLocaleLowerCase();
 const isVnId = (value: string) => /^v\d+$/i.test(value.trim());
@@ -180,19 +626,37 @@ const formatUtc8Date = (value: string) => {
 };
 const oneOf = <T extends string>(value: unknown, values: readonly T[], fallback: T) => typeof value === 'string' && (values as readonly string[]).includes(value) ? value as T : fallback;
 const defaultRoleFilter = (): CharacterRoleFilter => ({ primary: true, main: true, side: true, appears: true });
+const nextFrame = () => new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+const formatBytes = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size >= 10 || index === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[index]}`;
+};
+const formatSpeed = (value: number) => `${formatBytes(value)}/s`;
 
 function loadPersistedState() {
   try {
     const textValue = window.localStorage.getItem(STORAGE_KEY);
     if (!textValue) return null;
-    const value = JSON.parse(textValue) as Partial<PersistedState>;
+    const value = JSON.parse(textValue) as Partial<PersistedState> & { query?: unknown; submittedQuery?: unknown };
     if (value.version !== PERSISTED_STATE_VERSION) return null;
     const roleFilter = typeof value.tagRoleFilter === 'object' && value.tagRoleFilter ? value.tagRoleFilter as Partial<CharacterRoleFilter> : {};
+    const persistedMode = oneOf(value.mode, ['vn', 'character', 'tag'] as const, 'vn');
+    const legacyQuery = typeof value.query === 'string' ? value.query : '';
+    const legacySubmittedQuery = typeof value.submittedQuery === 'string' ? value.submittedQuery : '';
     return {
       version: PERSISTED_STATE_VERSION,
-      mode: oneOf(value.mode, ['vn', 'character', 'tag'] as const, 'vn'),
-      query: typeof value.query === 'string' ? value.query : '',
-      submittedQuery: typeof value.submittedQuery === 'string' ? value.submittedQuery : '',
+      mode: persistedMode,
+      vnQuery: typeof value.vnQuery === 'string' ? value.vnQuery : persistedMode === 'vn' ? legacyQuery : '',
+      characterQuery: typeof value.characterQuery === 'string' ? value.characterQuery : persistedMode === 'character' ? legacyQuery : '',
+      vnSubmittedQuery: typeof value.vnSubmittedQuery === 'string' ? value.vnSubmittedQuery : persistedMode === 'vn' ? legacySubmittedQuery : '',
+      characterSubmittedQuery: typeof value.characterSubmittedQuery === 'string' ? value.characterSubmittedQuery : persistedMode === 'character' ? legacySubmittedQuery : '',
       selectedVnIds: numberArray(value.selectedVnIds),
       selectedCharacterIds: numberArray(value.selectedCharacterIds),
       showSexual: booleanValue(value.showSexual, false),
@@ -204,6 +668,7 @@ function loadPersistedState() {
       minVotes: numberValue(value.minVotes, 50, 0),
       tagLimit: numberValue(value.tagLimit, 12, 1, 60),
       traitLimit: numberValue(value.traitLimit, 16, 1, 80),
+      profileSampleRounds: numberValue(value.profileSampleRounds, 1, 1, 1024),
       preferCharacterAverage: booleanValue(value.preferCharacterAverage, false),
       tagRoleFilter: {
         primary: booleanValue(roleFilter.primary, true),
@@ -213,7 +678,7 @@ function loadPersistedState() {
       },
       resultSort: oneOf(value.resultSort, ['relevance', 'rating', 'votes', 'title', 'confidence'] as const, 'relevance'),
       sortDirection: oneOf(value.sortDirection, ['desc', 'asc'] as const, 'desc'),
-      darkMode: booleanValue(value.darkMode, false),
+      darkMode: booleanValue(value.darkMode, systemPrefersDarkMode()),
       resultPage: numberValue(value.resultPage, 1, 1),
       localSearchPage: numberValue(value.localSearchPage, 1, 1),
       priorityTagIds: numberArray(value.priorityTagIds),
@@ -226,18 +691,46 @@ function loadPersistedState() {
   }
 }
 
+const metaSelectorStorageKey = (kind: 'tag' | 'trait') => `${META_SELECTOR_STORAGE_PREFIX}-${kind}`;
+
+function loadMetaSelectorState(kind: 'tag' | 'trait'): MetaSelectorPersistedState | null {
+  try {
+    const textValue = window.localStorage.getItem(metaSelectorStorageKey(kind));
+    if (!textValue) return null;
+    const value = JSON.parse(textValue) as Partial<MetaSelectorPersistedState>;
+    return {
+      query: typeof value.query === 'string' ? value.query : '',
+      openNodeIds: numberArray(value.openNodeIds),
+      openGroupLabels: Array.isArray(value.openGroupLabels) ? value.openGroupLabels.filter((item): item is string => typeof item === 'string') : [],
+      scrollTop: numberValue(value.scrollTop, 0, 0),
+      height: numberValue(value.height, 520, 260)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveMetaSelectorState(kind: 'tag' | 'trait', state: MetaSelectorPersistedState) {
+  try {
+    window.localStorage.setItem(metaSelectorStorageKey(kind), JSON.stringify(state));
+  } catch {
+  }
+}
+
 function resolveDataPath(manifest: DataManifest) {
   const path = manifest.dataPath ?? manifest.path;
-  if (!path) throw new Error('Data manifest does not include a data path');
+  if (!path) throw new Error(localizedText('errorDataManifestPathMissing', storedUiLanguage()));
   if (/^https?:\/\//i.test(path) || path.startsWith('./') || path.startsWith('../')) return path;
   return `./data/${path.replace(/^\/+/, '')}`;
 }
 
-async function loadDataSource(signal: AbortSignal, onProgress: (progress: number) => void) {
+async function loadDataSource(signal: AbortSignal, onProgress: (state: LoadProgressUpdate) => void) {
+  onProgress({ progress: 2, stage: 'loadingStageReadManifest' });
   const response = await fetch(DATA_MANIFEST_PATH, { cache: 'no-cache', signal });
   if (!response.ok) throw new Error(String(response.status));
   const manifest = await response.json() as DataManifest;
-  return loadDataText(resolveDataPath(manifest), true, signal, onProgress);
+  onProgress({ progress: 5, stage: 'loadingStagePrepareDownload' });
+  return loadDataText(resolveDataPath(manifest), true, signal, onProgress, manifest.size ?? 0);
 }
 
 const decode = (value: string) => {
@@ -291,20 +784,28 @@ function decodeLocalData(data: Data): Data {
   return { ...data, vns, characters, tags: data.tags.map(decodeMeta), traits: data.traits.map(decodeMeta) };
 }
 
-async function responseBytes(response: Response, onProgress: (progress: number) => void) {
-  const total = Number(response.headers.get('content-length')) || 0;
-  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+async function responseBytes(response: Response, onProgress: (state: LoadProgressUpdate) => void, fallbackTotal = 0) {
+  const total = Number(response.headers.get('content-length')) || fallbackTotal || 0;
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    onProgress({ progress: 75, stage: 'loadingStageCompressedDownloadComplete', detail: { loaded: buffer.byteLength, total: total || buffer.byteLength, speed: 0 } });
+    return new Uint8Array(buffer);
+  }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let loaded = 0;
+  const startedAt = performance.now();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     loaded += value.length;
-    if (total > 0) onProgress(Math.min(92, Math.round(loaded / total * 92)));
+    const elapsed = Math.max(0.001, (performance.now() - startedAt) / 1000);
+    const speed = loaded / elapsed;
+    const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
+    onProgress({ progress: total > 0 ? Math.min(75, Math.round(5 + ratio * 70)) : 35, stage: 'loadingStageDownloadGzip', detail: { loaded, total, speed } });
   }
-  if (total <= 0) onProgress(92);
+  onProgress({ progress: 75, stage: 'loadingStageCompressedDownloadComplete', detail: { loaded, total: total || loaded, speed: 0 } });
   const result = new Uint8Array(loaded);
   let offset = 0;
   for (const chunk of chunks) {
@@ -314,16 +815,22 @@ async function responseBytes(response: Response, onProgress: (progress: number) 
   return result;
 }
 
-async function loadDataText(url: string, compressed: boolean, signal: AbortSignal, onProgress: (progress: number) => void) {
+async function loadDataText(url: string, compressed: boolean, signal: AbortSignal, onProgress: (state: LoadProgressUpdate) => void, manifestSize = 0) {
   const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`数据文件读取失败：${response.status}`);
-  const bytes = await responseBytes(response, onProgress);
+  if (!response.ok) throw new Error(`${localizedText('errorDataFileReadFailed', storedUiLanguage())}：${response.status}`);
+  const bytes = await responseBytes(response, onProgress, manifestSize);
   const contentEncoding = response.headers.get('content-encoding')?.toLocaleLowerCase() ?? '';
   const hasGzipHeader = bytes[0] === 0x1f && bytes[1] === 0x8b;
-  if (!compressed || contentEncoding.includes('gzip') || !hasGzipHeader) return new TextDecoder().decode(bytes);
-  if (typeof DecompressionStream === 'undefined') throw new Error('当前浏览器不支持 gzip 解压');
+  if (!compressed || contentEncoding.includes('gzip') || !hasGzipHeader) {
+    onProgress({ progress: 82, stage: 'loadingStageReadPlainText', detail: null });
+    return new TextDecoder().decode(bytes);
+  }
+  if (typeof DecompressionStream === 'undefined') throw new Error(localizedText('errorUnsupportedGzip', storedUiLanguage()));
+  onProgress({ progress: 78, stage: 'loadingStageDecompressGzip', detail: null });
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
+  const textValue = await new Response(stream).text();
+  onProgress({ progress: 82, stage: 'loadingStageParseJsonPrepare', detail: null });
+  return textValue;
 }
 
 function commonPrefixLength(a: string, b: string) {
@@ -359,6 +866,29 @@ function canUseMetaForSearch(metaItem: Meta, spoiler: number, includeSpoiler: bo
   if (metaItem.sexual && !allowedSexualIds?.has(metaItem.id)) return false;
   if (!includeSpoiler && Math.max(spoiler, metaItem.defaultspoil ?? 0) > 0) return false;
   return true;
+}
+
+function metaFilterClass(metaItem: Meta, kind: 'tag' | 'trait'): MetaFilterClass {
+  if (metaItem.sexual) return 'sexual';
+  if ((metaItem.defaultspoil ?? 0) > 0) return 'spoiler';
+  if (kind === 'tag' && metaItem.blocked) return 'blocked';
+  if (kind === 'tag' && metaItem.tech) return 'technical';
+  return 'normal';
+}
+
+function metaAllowedByFilters(metaItem: Meta, kind: 'tag' | 'trait', includeSexual: boolean, includeSpoiler: boolean, includeBlocked = true, includeTechnical = true) {
+  switch (metaFilterClass(metaItem, kind)) {
+    case 'sexual':
+      return includeSexual;
+    case 'spoiler':
+      return includeSpoiler;
+    case 'blocked':
+      return includeBlocked;
+    case 'technical':
+      return includeTechnical;
+    default:
+      return true;
+  }
 }
 
 function makeVector(items: Pair[] | TraitPair[], meta: Map<number, Meta>, kind: 'tag' | 'trait', includeSpoiler: boolean, includeParents = false, allowedSexualIds?: Set<number>) {
@@ -569,28 +1099,27 @@ function metaChildrenMap(items: Meta[]) {
   return children;
 }
 
-function metaSearchDescendants(item: Meta, children: Map<number, Meta[]>, includeSexual: boolean, includeSpoiler: boolean, includeBlocked: boolean, path = new Set<number>()) {
+function metaSearchDescendants(kind: 'tag' | 'trait', item: Meta, children: Map<number, Meta[]>, includeSexual: boolean, includeSpoiler: boolean, includeBlocked: boolean, includeTechnical: boolean, path = new Set<number>()) {
   if (path.has(item.id)) return [];
   const nextPath = new Set(path);
   nextPath.add(item.id);
   const result: Meta[] = [];
   for (const child of children.get(item.id) ?? []) {
-    if (!includeSexual && child.sexual) continue;
-    if (!includeSpoiler && child.defaultspoil && child.defaultspoil > 0) continue;
-    if (!includeBlocked && child.blocked) continue;
-    result.push(child, ...metaSearchDescendants(child, children, includeSexual, includeSpoiler, includeBlocked, nextPath));
+    if (!metaAllowedByFilters(child, kind, includeSexual, includeSpoiler, includeBlocked, includeTechnical)) continue;
+    result.push(child, ...metaSearchDescendants(kind, child, children, includeSexual, includeSpoiler, includeBlocked, includeTechnical, nextPath));
   }
   return result;
 }
 
-function metaSearchGroups(selectedIds: Set<number>, items: Meta[], meta: Map<number, Meta>, includeSexual: boolean, includeSpoiler: boolean, includeBlocked = true) {
+function metaSearchGroups(kind: 'tag' | 'trait', selectedIds: Set<number>, items: Meta[], meta: Map<number, Meta>, includeSexual: boolean, includeSpoiler: boolean, includeBlocked = true, includeTechnical = true) {
   const children = metaChildrenMap(items);
   return [...selectedIds].map((selectedId) => {
     const alternatives = new Set<number>([selectedId]);
     const item = meta.get(selectedId);
     const includeSexualDescendants = includeSexual && item?.sexual === true;
     const includeBlockedDescendants = includeBlocked || item?.blocked === true;
-    if (item) for (const child of metaSearchDescendants(item, children, includeSexualDescendants, includeSpoiler, includeBlockedDescendants)) alternatives.add(child.id);
+    const includeTechnicalDescendants = includeTechnical || item?.tech === true;
+    if (item) for (const child of metaSearchDescendants(kind, item, children, includeSexualDescendants, includeSpoiler, includeBlockedDescendants, includeTechnicalDescendants)) alternatives.add(child.id);
     return { selectedId, alternatives };
   });
 }
@@ -635,10 +1164,8 @@ function visibleItems<T extends Pair | TraitPair>(items: T[], meta: Map<number, 
     const metaItem = meta.get(item[0]);
     const spoiler = itemSpoiler(item, kind);
     if (!metaItem) return false;
-    if (!includeSexual && metaItem.sexual) return false;
+    if (!metaAllowedByFilters(metaItem, kind, includeSexual, includeSpoiler, showBlockedTags, showTechnicalTags)) return false;
     if (!includeSpoiler && spoiler > 0) return false;
-    if (kind === 'tag' && metaItem.blocked && !showBlockedTags) return false;
-    if (kind === 'tag' && metaItem.tech && !showTechnicalTags) return false;
     return true;
   });
 }
@@ -648,8 +1175,8 @@ function decodedMetaField(value?: string, encoded?: boolean) {
   return encoded ? decode(value) : value;
 }
 
-function metaName(metaItem: Meta, showSexual: boolean, language: MetaLanguage) {
-  if (metaItem.sexual && !showSexual) return 'R18 已隐藏';
+function metaName(metaItem: Meta, showSexual: boolean, language: MetaLanguage, uiLanguage: UiLanguage = 'zh') {
+  if (metaItem.sexual && !showSexual) return localizedText('r18Hidden', uiLanguage);
   if (language === 'zh') {
     return decodedMetaField(metaItem.nameZh, metaItem.nameZhEncoded)
       ?? decodedMetaField(metaItem.nameJa, metaItem.nameJaEncoded)
@@ -669,8 +1196,8 @@ function metaEnglishName(metaItem: Meta) {
   return decodedMetaField(metaItem.name, metaItem.nameEncoded) ?? '';
 }
 
-function metaTooltip(metaItem: Meta, showSexual: boolean, language: MetaLanguage) {
-  if (metaItem.sexual && !showSexual) return 'R18 已隐藏';
+function metaTooltip(metaItem: Meta, showSexual: boolean, language: MetaLanguage, uiLanguage: UiLanguage = 'zh') {
+  if (metaItem.sexual && !showSexual) return localizedText('r18Hidden', uiLanguage);
   const descriptions = language === 'zh'
     ? [
       decodedMetaField(metaItem.descriptionZh, metaItem.descriptionZhEncoded),
@@ -698,31 +1225,17 @@ function traitGroupMeta(metaItem: Meta, meta: Map<number, Meta>) {
   return meta.get(groupId) ?? metaItem;
 }
 
-function traitGroupLabel(metaItem: Meta, meta: Map<number, Meta>) {
+function traitGroupLabel(metaItem: Meta, meta: Map<number, Meta>, showSexual: boolean, language: MetaLanguage, uiLanguage: UiLanguage) {
   const group = traitGroupMeta(metaItem, meta);
-  const name = metaEnglishName(group);
-  const labels: Record<string, string> = {
-    Hair: '头发',
-    Eyes: '眼睛',
-    Body: '身体',
-    Clothes: '服饰',
-    Items: '物品',
-    Personality: '性格',
-    Role: '角色定位',
-    'Engages in': '行为',
-    'Subject of': '对象',
-    'Engages in (Sexual)': '性行为',
-    'Subject of (Sexual)': '性对象'
-  };
-  return labels[name] ?? name;
+  return metaName(group, showSexual, language, uiLanguage);
 }
 
-function traitGroups(items: TraitPair[], meta: Map<number, Meta>, showSexual: boolean, showSpoiler: boolean) {
+function traitGroups(items: TraitPair[], meta: Map<number, Meta>, showSexual: boolean, showSpoiler: boolean, metaLanguage: MetaLanguage, uiLanguage: UiLanguage) {
   const groups = new Map<string, TraitPair[]>();
   for (const item of visibleItems(items, meta, 'trait', showSexual, showSpoiler)) {
     const metaItem = meta.get(item[0]);
     if (!metaItem) continue;
-    const label = traitGroupLabel(metaItem, meta);
+    const label = traitGroupLabel(metaItem, meta, showSexual, metaLanguage, uiLanguage);
     const list = groups.get(label) ?? [];
     list.push(item);
     groups.set(label, list);
@@ -730,13 +1243,13 @@ function traitGroups(items: TraitPair[], meta: Map<number, Meta>, showSexual: bo
   return [...groups.entries()];
 }
 
-function profileTraitGroups(items: [number, number][], meta: Map<number, Meta>, showSexual: boolean) {
+function profileTraitGroups(items: [number, number][], meta: Map<number, Meta>, showSexual: boolean, metaLanguage: MetaLanguage, uiLanguage: UiLanguage) {
   const groups = new Map<string, [number, number][]>() ;
   for (const item of items) {
     const metaItem = meta.get(item[0]);
     if (!metaItem) continue;
     if (!showSexual && metaItem.sexual) continue;
-    const label = traitGroupLabel(metaItem, meta);
+    const label = traitGroupLabel(metaItem, meta, showSexual, metaLanguage, uiLanguage);
     const list = groups.get(label) ?? [];
     list.push(item);
     groups.set(label, list);
@@ -746,6 +1259,26 @@ function profileTraitGroups(items: [number, number][], meta: Map<number, Meta>, 
 
 function compareVnScore(a: Vn, b: Vn) {
   return (b.rating - a.rating) || (b.votes - a.votes) || (b.average - a.average);
+}
+
+function exactSearchMatch(value: string | null | undefined, query: string) {
+  if (!value) return false;
+  const field = text(value);
+  const compactField = normalizeTitle(value);
+  const compactQuery = normalizeTitle(query);
+  return field === query || Boolean(compactField && compactField === compactQuery);
+}
+
+function exactSearchRank(primaryValues: Array<string | null | undefined>, aliasValues: Array<string | null | undefined>, query: string) {
+  if (primaryValues.some((value) => exactSearchMatch(value, query))) return 2;
+  if (aliasValues.some((value) => exactSearchMatch(value, query))) return 1;
+  return 0;
+}
+
+function vnExactSearchRank(vn: Vn, query: string) {
+  if (`v${vn.id}` === query) return 3;
+  const aliases = vn.aliases.split('\n').map((alias) => alias.trim()).filter(Boolean);
+  return exactSearchRank([vn.title, vn.original], aliases, query);
 }
 
 function vnSearchRank(vn: Vn, query: string) {
@@ -762,8 +1295,25 @@ function vnSearchRank(vn: Vn, query: string) {
 
 function compareVnSearchResult(query: string) {
   return (a: Vn, b: Vn) => {
+    const exactDiff = vnExactSearchRank(b, query) - vnExactSearchRank(a, query);
     const rankDiff = vnSearchRank(b, query) - vnSearchRank(a, query);
-    return rankDiff || compareVnScore(a, b);
+    return exactDiff || rankDiff || compareVnScore(a, b) || a.id - b.id;
+  };
+}
+
+function characterExactSearchRank(character: Character, query: string) {
+  if (`c${character.id}` === query) return 3;
+  return exactSearchRank([character.name, character.original], character.aliases, query);
+}
+
+function characterSearchMatch(character: Character, query: string) {
+  return characterExactSearchRank(character, query) > 0 || character.search.includes(query);
+}
+
+function compareCharacterSearchResult(query: string) {
+  return (a: Character, b: Character) => {
+    const exactDiff = characterExactSearchRank(b, query) - characterExactSearchRank(a, query);
+    return exactDiff || compareCharacterScore(a, b) || a.id - b.id;
   };
 }
 
@@ -809,6 +1359,14 @@ function roleAllowed(role: string, filter: CharacterRoleFilter) {
   if (role === 'side') return filter.side;
   if (role === 'appears') return filter.appears;
   return filter.appears;
+}
+
+function characterRoleText(role: string, t: Record<string, string>) {
+  if (role === 'primary') return t.primary;
+  if (role === 'main') return t.main;
+  if (role === 'side') return t.side;
+  if (role === 'appears') return t.appears;
+  return role;
 }
 
 function characterHasQualifiedVn(character: Character, vns: Map<number, Vn>, minVotes: number, roleFilter?: CharacterRoleFilter) {
@@ -1015,13 +1573,42 @@ function pageItems<T>(items: T[], page: number, perPage = RESULTS_PER_PAGE) {
   return items.slice((page - 1) * perPage, page * perPage);
 }
 
+function LoadingErrorView({ error, language = storedUiLanguage(), darkMode = storedDarkMode() }: { error: LoadError; language?: UiLanguage; darkMode?: boolean }) {
+  const t = UI_TEXT[language];
+  return <main className={`shell ${darkMode ? 'themeDark' : 'themeLight'}`}><section className="panel error loadErrorPanel"><h1>{t.errorTitle}</h1><p>{t.errorDescription}</p><div className="errorActions"><button onClick={() => window.location.reload()}>{t.errorReload}</button></div><div className="errorMetaRow"><dl className="errorMeta"><div><dt>{t.errorStage}</dt><dd>{localizedStage(error.stage, language)}</dd></div><div><dt>{t.errorProgress}</dt><dd>{error.progress}%</dd></div>{error.detail ? <><div><dt>{t.errorLoaded}</dt><dd>{formatBytes(error.detail.loaded)}</dd></div><div><dt>{t.errorTotal}</dt><dd>{error.detail.total ? formatBytes(error.detail.total) : t.loadingUnknown}</dd></div><div><dt>{t.errorSpeed}</dt><dd>{error.detail.speed ? formatSpeed(error.detail.speed) : t.loadingUnknown}</dd></div></> : null}</dl><a className="errorIssueLink" href={ISSUE_URL} target="_blank" rel="noreferrer">{t.errorSubmitIssue}</a></div><pre className="errorDetails">{error.stack ?? error.message}</pre></section></main>;
+}
+
+class AppErrorBoundary extends Component<{ children: React.ReactNode }, { error: LoadError | null }> {
+  state: { error: LoadError | null } = { error: null };
+
+  static getDerivedStateFromError(reason: unknown) {
+    return { error: { message: reason instanceof Error ? reason.message : String(reason), stack: reason instanceof Error ? reason.stack : undefined, stage: 'errorRenderMain', progress: 100, detail: null } };
+  }
+
+  componentDidCatch(reason: unknown) {
+    console.error(reason);
+  }
+
+  render() {
+    if (this.state.error) return <LoadingErrorView error={this.state.error} />;
+    return this.props.children;
+  }
+}
+
 function App() {
   const persistedState = useMemo(() => loadPersistedState(), []);
   const [data, setData] = useState<Data | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [appReady, setAppReady] = useState(false);
+  const [error, setError] = useState<LoadError | null>(null);
   const [mode, setMode] = useState<Mode>(() => persistedState?.mode ?? 'vn');
-  const [query, setQuery] = useState(() => persistedState?.query ?? '');
-  const [submittedQuery, setSubmittedQuery] = useState(() => persistedState?.submittedQuery ?? '');
+  const [vnQuery, setVnQuery] = useState(() => persistedState?.vnQuery ?? '');
+  const [characterQuery, setCharacterQuery] = useState(() => persistedState?.characterQuery ?? '');
+  const [vnSubmittedQuery, setVnSubmittedQuery] = useState(() => persistedState?.vnSubmittedQuery ?? '');
+  const [characterSubmittedQuery, setCharacterSubmittedQuery] = useState(() => persistedState?.characterSubmittedQuery ?? '');
+  const query = mode === 'character' ? characterQuery : vnQuery;
+  const submittedQuery = mode === 'character' ? characterSubmittedQuery : vnSubmittedQuery;
+  const setActiveQuery = mode === 'character' ? setCharacterQuery : setVnQuery;
+  const setActiveSubmittedQuery = mode === 'character' ? setCharacterSubmittedQuery : setVnSubmittedQuery;
   const [selectedVns, setSelectedVns] = useState<Vn[]>([]);
   const [selectedCharacters, setSelectedCharacters] = useState<Character[]>([]);
   const [vnDetails, setVnDetails] = useState<Record<number, Detail>>({});
@@ -1032,18 +1619,20 @@ function App() {
   const [showSpoiler, setShowSpoiler] = useState(() => persistedState?.showSpoiler ?? false);
   const [showBlockedTags, setShowBlockedTags] = useState(() => persistedState?.showBlockedTags ?? false);
   const [showTechnicalTags, setShowTechnicalTags] = useState(() => persistedState?.showTechnicalTags ?? false);
-  const [loadProgress, setLoadProgress] = useState(0);
+  const [loadState, setLoadState] = useState<LoadState>({ progress: 0, stage: 'loadingStageReady', detail: null });
+  const loadStateRef = useRef<LoadState>({ progress: 0, stage: 'loadingStageReady', detail: null });
   const [metaLanguage, setMetaLanguage] = useState<MetaLanguage>(() => persistedState?.metaLanguage ?? 'zh');
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(() => persistedState?.uiLanguage ?? 'zh');
   const t = UI_TEXT[uiLanguage];
   const [minVotes, setMinVotes] = useState(() => persistedState?.minVotes ?? 50);
   const [tagLimit, setTagLimit] = useState(() => persistedState?.tagLimit ?? 12);
   const [traitLimit, setTraitLimit] = useState(() => persistedState?.traitLimit ?? 16);
+  const [profileSampleRounds, setProfileSampleRounds] = useState(() => persistedState?.profileSampleRounds ?? 1);
   const [preferCharacterAverage, setPreferCharacterAverage] = useState(() => persistedState?.preferCharacterAverage ?? false);
   const [tagRoleFilter, setTagRoleFilter] = useState<CharacterRoleFilter>(() => persistedState?.tagRoleFilter ?? defaultRoleFilter());
   const [resultSort, setResultSort] = useState<ResultSort>(() => persistedState?.resultSort ?? 'relevance');
   const [sortDirection, setSortDirection] = useState<SortDirection>(() => persistedState?.sortDirection ?? 'desc');
-  const [darkMode, setDarkMode] = useState(() => persistedState?.darkMode ?? false);
+  const [darkMode, setDarkMode] = useState(() => persistedState?.darkMode ?? storedDarkMode());
   const [githubStars, setGithubStars] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [resultPage, setResultPage] = useState(() => persistedState?.resultPage ?? 1);
@@ -1061,14 +1650,18 @@ function App() {
   const recommendationDetailVersionRef = useRef(0);
   const recommendationWorkerRef = useRef<Worker | null>(null);
   const recommendationRequestIdRef = useRef(0);
-  const localResultsRef = useRef<HTMLDivElement | null>(null);
   const recommendationResultsRef = useRef<HTMLElement | null>(null);
+  const localSearchPanelRef = useRef<HTMLDivElement | null>(null);
+  const sampleProfilePanelRef = useRef<HTMLDivElement | null>(null);
+  const localSearchListRef = useRef<HTMLDivElement | null>(null);
+  const recommendationListRef = useRef<HTMLDivElement | null>(null);
   const persistedSelectionsRestoredRef = useRef(!persistedState);
   const recommendationResetReadyRef = useRef(false);
   const localSearchResetReadyRef = useRef(false);
   const requestedSampleDetailsRef = useRef(new Set<string>());
   const [workerReady, setWorkerReady] = useState(false);
   const [workerComputing, setWorkerComputing] = useState(false);
+  const [workerProgress, setWorkerProgress] = useState<WorkerProgressState | null>(null);
   const [workerResult, setWorkerResult] = useState<WorkerResult>(() => emptyWorkerResult());
   const renderShowSexual = useDeferredValue(showSexual);
   const renderShowSpoiler = useDeferredValue(showSpoiler);
@@ -1082,17 +1675,27 @@ function App() {
   useEffect(() => {
     const worker = new Worker(new URL('./computeWorker.ts', import.meta.url), { type: 'module' });
     recommendationWorkerRef.current = worker;
-    worker.onmessage = (event: MessageEvent<{ type: string; requestId?: number; result?: WorkerResult; error?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ type: string; requestId?: number; result?: WorkerResult; progress?: WorkerProgress; phase?: WorkerProgress['phase']; current?: number; total?: number; error?: string }>) => {
       if (event.data.type === 'ready') {
         setWorkerReady(true);
+        return;
+      }
+      if (event.data.type === 'progress' && event.data.requestId === recommendationRequestIdRef.current) {
+        const phase = event.data.phase ?? 'search';
+        setWorkerProgress((current) => ({
+          ...(current ?? {}),
+          [phase]: { current: event.data.current ?? 0, total: event.data.total ?? 1 }
+        }));
         return;
       }
       if (event.data.type === 'result' && event.data.requestId === recommendationRequestIdRef.current && event.data.result) {
         setWorkerResult(event.data.result);
         setWorkerComputing(false);
+        setWorkerProgress(null);
       }
       if (event.data.type === 'error' && event.data.requestId === recommendationRequestIdRef.current) {
         setWorkerComputing(false);
+        setWorkerProgress(null);
         console.error(event.data.error);
       }
     };
@@ -1123,17 +1726,29 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
-    const updateProgress = (progress: number) => {
-      if (!cancelled) setLoadProgress(progress);
+    const updateProgress = (state: LoadProgressUpdate) => {
+      if (!cancelled) setLoadState((current) => {
+        const next = { ...current, ...state, progress: Math.max(current.progress, state.progress) };
+        loadStateRef.current = next;
+        return next;
+      });
     };
     const load = async () => {
       try {
         const textValue = await loadDataSource(controller.signal, updateProgress);
         if (cancelled) return;
-        setLoadProgress(96);
+        updateProgress({ progress: 84, stage: 'loadingStageParseJson', detail: null });
+        await nextFrame();
+        if (cancelled) return;
         const raw = JSON.parse(textValue) as Data;
         if (cancelled) return;
+        updateProgress({ progress: 90, stage: 'loadingStageDecodeFields', detail: null });
+        await nextFrame();
+        if (cancelled) return;
         const decoded = decodeLocalData(raw);
+        updateProgress({ progress: 94, stage: 'loadingStageRestoreState', detail: null });
+        await nextFrame();
+        if (cancelled) return;
         if (persistedState && !persistedSelectionsRestoredRef.current) {
           const restoredVnIds = new Set(persistedState.selectedVnIds);
           const restoredCharacterIds = new Set(persistedState.selectedCharacterIds);
@@ -1141,15 +1756,30 @@ function App() {
           setSelectedCharacters(decoded.characters.filter((character) => restoredCharacterIds.has(character.id)));
           persistedSelectionsRestoredRef.current = true;
         }
+        updateProgress({ progress: 97, stage: 'loadingStageCommitData', detail: null });
+        await nextFrame();
+        if (cancelled) return;
+        updateProgress({ progress: 99, stage: 'loadingStagePrepareIndex', detail: null });
+        await nextFrame();
+        if (cancelled) return;
         setData(decoded);
         setPersistenceReady(true);
-        window.requestAnimationFrame(() => {
-          if (!cancelled) setDeferredDataWorkReady(true);
-        });
-        setLoadProgress(100);
+        setDeferredDataWorkReady(true);
+        updateProgress({ progress: 100, stage: 'loadingStageComplete', detail: null });
+        await nextFrame();
+        if (cancelled) return;
+        setAppReady(true);
       } catch (reason) {
-        if (!controller.signal.aborted) setError(String(reason));
-      }
+          if (controller.signal.aborted) return;
+          const currentState = loadStateRef.current;
+          setError({
+            message: reason instanceof Error ? reason.message : String(reason),
+            stack: reason instanceof Error ? reason.stack : undefined,
+            stage: currentState.stage,
+            progress: currentState.progress,
+            detail: currentState.detail
+          });
+        }
     };
     load();
     return () => {
@@ -1177,40 +1807,46 @@ function App() {
 
   useEffect(() => {
     if (!data || !persistenceReady) return;
-    const state: PersistedState = {
-      version: PERSISTED_STATE_VERSION,
-      mode,
-      query,
-      submittedQuery,
-      selectedVnIds: selectedVns.map((vn) => vn.id),
-      selectedCharacterIds: selectedCharacters.map((character) => character.id),
-      showSexual,
-      showSpoiler,
-      showBlockedTags,
-      showTechnicalTags,
-      metaLanguage,
-      uiLanguage,
-      minVotes,
-      tagLimit,
-      traitLimit,
-      preferCharacterAverage,
-      tagRoleFilter,
-      resultSort,
-      sortDirection,
-      darkMode,
-      resultPage,
-      localSearchPage,
-      priorityTagIds: [...priorityTags],
-      priorityTraitIds: [...priorityTraits],
-      tagSearchTagIds: [...tagSearchTags],
-      tagSearchTraitIds: [...tagSearchTraits]
-    };
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-  }, [data, persistenceReady, mode, query, submittedQuery, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, minVotes, tagLimit, traitLimit, preferCharacterAverage, tagRoleFilter, resultSort, sortDirection, darkMode, resultPage, localSearchPage, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
+    const handle = window.setTimeout(() => {
+      const state: PersistedState = {
+        version: PERSISTED_STATE_VERSION,
+        mode,
+        vnQuery,
+        characterQuery,
+        vnSubmittedQuery,
+        characterSubmittedQuery,
+        selectedVnIds: selectedVns.map((vn) => vn.id),
+        selectedCharacterIds: selectedCharacters.map((character) => character.id),
+        showSexual,
+        showSpoiler,
+        showBlockedTags,
+        showTechnicalTags,
+        metaLanguage,
+        uiLanguage,
+        minVotes,
+        tagLimit,
+        traitLimit,
+        profileSampleRounds,
+        preferCharacterAverage,
+        tagRoleFilter,
+        resultSort,
+        sortDirection,
+        darkMode,
+        resultPage,
+        localSearchPage,
+        priorityTagIds: [...priorityTags],
+        priorityTraitIds: [...priorityTraits],
+        tagSearchTagIds: [...tagSearchTags],
+        tagSearchTraitIds: [...tagSearchTraits]
+      };
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+    }, 120);
+    return () => window.clearTimeout(handle);
+  }, [data, persistenceReady, mode, vnQuery, characterQuery, vnSubmittedQuery, characterSubmittedQuery, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, resultSort, sortDirection, darkMode, resultPage, localSearchPage, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
 
   useEffect(() => {
     if (!persistedSelectionsRestoredRef.current) return;
@@ -1223,7 +1859,7 @@ function App() {
     setShowRecommendations(false);
     setRecommendationDetails({});
     setResultPage(1);
-  }, [mode, selectedVns, selectedCharacters, renderShowBlockedTags, minVotes, tagLimit, traitLimit, preferCharacterAverage, tagRoleFilter, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
+  }, [mode, selectedVns, selectedCharacters, renderShowBlockedTags, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
 
   useEffect(() => {
     if (!recommendationResetReadyRef.current) return;
@@ -1241,8 +1877,8 @@ function App() {
 
   const tagMeta = useMemo(() => new Map(data?.tags.map((tag) => [tag.id, tag]) ?? []), [data]);
   const traitMeta = useMemo(() => new Map(data?.traits.map((trait) => [trait.id, trait]) ?? []), [data]);
-  const selectedSexualTagIds = useMemo(() => new Set([...priorityTags].filter((id) => tagMeta.get(id)?.sexual)), [priorityTags, tagMeta]);
-  const selectedSexualTraitIds = useMemo(() => new Set([...priorityTraits].filter((id) => traitMeta.get(id)?.sexual)), [priorityTraits, traitMeta]);
+  const profileSexualTagIds = useMemo(() => new Set<number>(), []);
+  const profileSexualTraitIds = useMemo(() => new Set<number>(), []);
   const vnById = useMemo(() => new Map(data?.vns.map((vn) => [vn.id, vn]) ?? []), [data]);
   const characterById = useMemo(() => new Map(data?.characters.map((character) => [character.id, character]) ?? []), [data]);
 
@@ -1256,88 +1892,107 @@ function App() {
     setPersistenceReady(true);
   }, [data, persistedState, vnById, characterById]);
 
-  const directTagUsageCounts = useMemo(() => deferredDataWorkReady ? directMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag') : new Map<number, number>(), [deferredDataWorkReady, data, tagMeta]);
-  const directTraitUsageCounts = useMemo(() => deferredDataWorkReady ? directMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait') : new Map<number, number>(), [deferredDataWorkReady, data, traitMeta]);
-  const tagUsageCounts = useMemo(() => deferredDataWorkReady && mode === 'tag' ? searchableMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag', renderShowSexual, renderShowSpoiler, (vn) => (vn.votes ?? 0) >= minVotes) : new Map<number, number>(), [deferredDataWorkReady, mode, data, tagMeta, renderShowSexual, renderShowSpoiler, minVotes]);
-  const traitUsageCounts = useMemo(() => deferredDataWorkReady && mode === 'tag' ? searchableMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait', renderShowSexual, renderShowSpoiler, (character) => character.vns?.some(([id, role]) => (vnById.get(id)?.votes ?? 0) >= minVotes && roleAllowed(role, tagRoleFilter)) ?? false) : new Map<number, number>(), [deferredDataWorkReady, mode, data, traitMeta, renderShowSexual, renderShowSpoiler, vnById, minVotes, tagRoleFilter]);
+  const directTagUsageSets = useMemo(() => {
+    if (!deferredDataWorkReady) return new Map<number, Set<number>>();
+    const entries = showSpoiler ? data?.usageIndex?.directTagVns : data?.usageIndex?.directTagVnsNoSpoiler;
+    return usageEntriesToSetMap(entries, data?.tags ?? []) ?? directMetaUsageSets(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag', showSpoiler);
+  }, [deferredDataWorkReady, data, tagMeta, showSpoiler]);
+  const directTraitUsageSets = useMemo(() => {
+    if (!deferredDataWorkReady) return new Map<number, Set<number>>();
+    const entries = showSpoiler ? data?.usageIndex?.directTraitCharacters : data?.usageIndex?.directTraitCharactersNoSpoiler;
+    return usageEntriesToSetMap(entries, data?.traits ?? []) ?? directMetaUsageSets(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait', showSpoiler);
+  }, [deferredDataWorkReady, data, traitMeta, showSpoiler]);
+  const tagUsageCounts = useMemo(() => aggregateMetaUsageCounts(directTagUsageSets, data?.tags ?? [], 'tag', showSexual, showSpoiler, showBlockedTags, showTechnicalTags), [directTagUsageSets, data, showSexual, showSpoiler, showBlockedTags, showTechnicalTags]);
+  const traitUsageCounts = useMemo(() => aggregateMetaUsageCounts(directTraitUsageSets, data?.traits ?? [], 'trait', showSexual, showSpoiler), [directTraitUsageSets, data, showSexual, showSpoiler]);
+  const deferredSelectedVns = useDeferredValue(selectedVns);
+  const deferredSelectedCharacters = useDeferredValue(selectedCharacters);
+  const profileComputing = deferredSelectedVns !== selectedVns || deferredSelectedCharacters !== selectedCharacters;
 
-  const searchResults = useMemo(() => {
+  const baseSearchResults = useMemo(() => {
     if (!data || !deferredDataWorkReady) return [];
     const q = text(submittedQuery);
     if (!q) return [];
     if (mode === 'vn') {
-      const excluded = new Set(selectedVns.map((vn) => vn.id));
-      if (isVnId(q)) return data.vns.filter((vn) => vn.id === idOf(q) && !excluded.has(vn.id));
+      if (isVnId(q)) return data.vns.filter((vn) => vn.id === idOf(q));
       return data.vns
-        .filter((vn) => !excluded.has(vn.id) && vnSearchRank(vn, q) > 0)
+        .filter((vn) => vnSearchRank(vn, q) > 0)
         .sort(compareVnSearchResult(q));
     }
-    const excluded = new Set(selectedCharacters.map((character) => character.id));
-    if (isCharId(q)) return data.characters.filter((character) => character.id === idOf(q) && !excluded.has(character.id));
+    if (isCharId(q)) return data.characters.filter((character) => character.id === idOf(q));
     const directCharacters = data.characters
-      .filter((character) => !excluded.has(character.id) && character.search.includes(q))
-      .sort(compareCharacterScore);
+      .filter((character) => characterSearchMatch(character, q))
+      .sort(compareCharacterSearchResult(q));
     if (directCharacters.length) return directCharacters;
-    const matchedVns = data.vns.filter((vn) => vn.search.includes(q)).sort(compareVnScore).slice(0, 30);
+    const matchedVns = data.vns.filter((vn) => vnSearchRank(vn, q) > 0).sort(compareVnSearchResult(q)).slice(0, 30);
     const matchedVnRank = new Map(matchedVns.map((vn, index) => [vn.id, matchedVns.length - index]));
     if (!matchedVnRank.size) return [];
     return data.characters
-      .filter((character) => !excluded.has(character.id) && character.vns.some(([id]) => matchedVnRank.has(id)))
+      .filter((character) => character.vns.some(([id]) => matchedVnRank.has(id)))
       .sort((a, b) => {
         const left = Math.max(0, ...b.vns.map(([id]) => matchedVnRank.get(id) ?? 0)) * 1000 + characterDisplayScore(b, vnById, false);
         const right = Math.max(0, ...a.vns.map(([id]) => matchedVnRank.get(id) ?? 0)) * 1000 + characterDisplayScore(a, vnById, false);
         return left - right;
       });
-  }, [data, deferredDataWorkReady, mode, submittedQuery, vnById, selectedVns, selectedCharacters]);
+  }, [data, deferredDataWorkReady, mode, submittedQuery, vnById]);
 
-  const localSearchPerPage = isMobile && mode === 'vn' ? MOBILE_VN_SEARCH_RESULTS_PER_PAGE : LOCAL_SEARCH_RESULTS_PER_PAGE;
+  const searchResults = useMemo(() => {
+    if (mode === 'vn') {
+      const excluded = new Set(selectedVns.map((vn) => vn.id));
+      return (baseSearchResults as Vn[]).filter((vn) => !excluded.has(vn.id));
+    }
+    const excluded = new Set(selectedCharacters.map((character) => character.id));
+    return (baseSearchResults as Character[]).filter((character) => !excluded.has(character.id));
+  }, [baseSearchResults, mode, selectedVns, selectedCharacters]);
+
+  const localSearchPerPage = isMobile ? MOBILE_VN_SEARCH_RESULTS_PER_PAGE : LOCAL_SEARCH_RESULTS_PER_PAGE;
   const localSearchPageCount = pageCount(searchResults.length, localSearchPerPage);
   const currentLocalSearchPage = Math.min(localSearchPage, localSearchPageCount);
   const visibleSearchResults = pageItems<Vn | Character>(searchResults as (Vn | Character)[], currentLocalSearchPage, localSearchPerPage);
   const scrollToPanelTop = (target: HTMLElement | null) => target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const resetScrollTop = (target: HTMLElement | null) => {
+    if (target) target.scrollTop = 0;
+  };
   const changeLocalSearchPage = (page: number) => {
     setLocalSearchPage(Math.min(localSearchPageCount, Math.max(1, page)));
-    window.requestAnimationFrame(() => scrollToPanelTop(localResultsRef.current));
+    window.requestAnimationFrame(() => {
+      resetScrollTop(localSearchListRef.current);
+    });
   };
 
   const vnProfileSpoilerOff = useMemo(() => {
-    if (!selectedVns.length) return new Map<number, number>();
-    return mergeVectors(selectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', false, false, selectedSexualTagIds)));
-  }, [selectedVns, tagMeta, selectedSexualTagIds]);
+    if (!deferredSelectedVns.length) return new Map<number, number>();
+    return mergeVectors(deferredSelectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', false, false, profileSexualTagIds)));
+  }, [deferredSelectedVns, tagMeta, profileSexualTagIds]);
 
   const vnProfileSpoilerOn = useMemo(() => {
-    if (!selectedVns.length) return new Map<number, number>();
-    return mergeVectors(selectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', true, false, selectedSexualTagIds)));
-  }, [selectedVns, tagMeta, selectedSexualTagIds]);
+    if (!deferredSelectedVns.length) return new Map<number, number>();
+    return mergeVectors(deferredSelectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', true, false, profileSexualTagIds)));
+  }, [deferredSelectedVns, tagMeta, profileSexualTagIds]);
 
   const vnProfile = renderShowSpoiler ? vnProfileSpoilerOn : vnProfileSpoilerOff;
 
-  const vnProfileSpoilers = useMemo(() => mergeSpoilers(selectedVns.map((vn) => vn.tags), 'tag', tagMeta, renderShowSexual, renderShowSpoiler), [selectedVns, tagMeta, renderShowSexual, renderShowSpoiler]);
+  const vnProfileSpoilers = useMemo(() => mergeSpoilers(deferredSelectedVns.map((vn) => vn.tags), 'tag', tagMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedVns, tagMeta, renderShowSexual, renderShowSpoiler]);
 
   const characterProfileSpoilerOff = useMemo(() => {
-    if (!selectedCharacters.length) return new Map<number, number>();
-    return mergeVectors(selectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', false, false, selectedSexualTraitIds)));
-  }, [selectedCharacters, traitMeta, selectedSexualTraitIds]);
+    if (!deferredSelectedCharacters.length) return new Map<number, number>();
+    return mergeVectors(deferredSelectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', false, false, profileSexualTraitIds)));
+  }, [deferredSelectedCharacters, traitMeta, profileSexualTraitIds]);
 
   const characterProfileSpoilerOn = useMemo(() => {
-    if (!selectedCharacters.length) return new Map<number, number>();
-    return mergeVectors(selectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', true, false, selectedSexualTraitIds)));
-  }, [selectedCharacters, traitMeta, selectedSexualTraitIds]);
+    if (!deferredSelectedCharacters.length) return new Map<number, number>();
+    return mergeVectors(deferredSelectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', true, false, profileSexualTraitIds)));
+  }, [deferredSelectedCharacters, traitMeta, profileSexualTraitIds]);
 
   const characterProfile = renderShowSpoiler ? characterProfileSpoilerOn : characterProfileSpoilerOff;
 
-  const characterProfileSpoilers = useMemo(() => mergeSpoilers(selectedCharacters.map((character) => character.traits), 'trait', traitMeta, renderShowSexual, renderShowSpoiler), [selectedCharacters, traitMeta, renderShowSexual, renderShowSpoiler]);
+  const characterProfileSpoilers = useMemo(() => mergeSpoilers(deferredSelectedCharacters.map((character) => character.traits), 'trait', traitMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedCharacters, traitMeta, renderShowSexual, renderShowSpoiler]);
 
   const activePriorityTags = useMemo(() => new Set([...priorityTags].filter((id) => vnProfileSpoilerOn.has(id) || vnProfileSpoilerOff.has(id))), [priorityTags, vnProfileSpoilerOn, vnProfileSpoilerOff]);
   const activePriorityTraits = useMemo(() => new Set([...priorityTraits].filter((id) => characterProfileSpoilerOn.has(id) || characterProfileSpoilerOff.has(id))), [priorityTraits, characterProfileSpoilerOn, characterProfileSpoilerOff]);
-  const activeVnProfileSpoilerOff = useMemo(() => omitUnprioritizedSpecialTags(expandVectorParents(searchVector(vnProfileSpoilerOff, tagLimit, activePriorityTags, tagMeta, directTagUsageCounts), tagMeta, false, activePriorityTags), tagMeta, activePriorityTags), [vnProfileSpoilerOff, tagLimit, activePriorityTags, tagMeta, directTagUsageCounts]);
-  const activeVnProfileSpoilerOn = useMemo(() => omitUnprioritizedSpecialTags(expandVectorParents(searchVector(vnProfileSpoilerOn, tagLimit, activePriorityTags, tagMeta, directTagUsageCounts), tagMeta, true, activePriorityTags), tagMeta, activePriorityTags), [vnProfileSpoilerOn, tagLimit, activePriorityTags, tagMeta, directTagUsageCounts]);
-  const activeCharacterProfileSpoilerOff = useMemo(() => expandVectorParents(searchVector(characterProfileSpoilerOff, traitLimit, activePriorityTraits, traitMeta, directTraitUsageCounts), traitMeta, false, activePriorityTraits), [characterProfileSpoilerOff, traitLimit, activePriorityTraits, traitMeta, directTraitUsageCounts]);
-  const activeCharacterProfileSpoilerOn = useMemo(() => expandVectorParents(searchVector(characterProfileSpoilerOn, traitLimit, activePriorityTraits, traitMeta, directTraitUsageCounts), traitMeta, true, activePriorityTraits), [characterProfileSpoilerOn, traitLimit, activePriorityTraits, traitMeta, directTraitUsageCounts]);
-  const tagSearchTagGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups(tagSearchTags, data.tags, tagMeta, true, false, false) : [], [data, tagSearchTags, tagMeta]);
-  const tagSearchTagGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups(tagSearchTags, data.tags, tagMeta, true, true, false) : [], [data, tagSearchTags, tagMeta]);
-  const tagSearchTraitGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups(tagSearchTraits, data.traits, traitMeta, true, false) : [], [data, tagSearchTraits, traitMeta]);
-  const tagSearchTraitGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups(tagSearchTraits, data.traits, traitMeta, true, true) : [], [data, tagSearchTraits, traitMeta]);
+  const tagSearchTagGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('tag', tagSearchTags, data.tags, tagMeta, true, false, false, false) : [], [data, tagSearchTags, tagMeta]);
+  const tagSearchTagGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups('tag', tagSearchTags, data.tags, tagMeta, true, true, false, false) : [], [data, tagSearchTags, tagMeta]);
+  const tagSearchTraitGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('trait', tagSearchTraits, data.traits, traitMeta, true, false) : [], [data, tagSearchTraits, traitMeta]);
+  const tagSearchTraitGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups('trait', tagSearchTraits, data.traits, traitMeta, true, true) : [], [data, tagSearchTraits, traitMeta]);
   const tagSearchTagGroups = renderShowSpoiler ? tagSearchTagGroupsSpoilerOn : tagSearchTagGroupsSpoilerOff;
   const tagSearchTraitGroups = renderShowSpoiler ? tagSearchTraitGroupsSpoilerOn : tagSearchTraitGroupsSpoilerOff;
   const tagSearchSexualTagIdsSpoilerOff = useMemo(() => selectedSexualAlternativeIds(tagSearchTagGroupsSpoilerOff, tagMeta), [tagSearchTagGroupsSpoilerOff, tagMeta]);
@@ -1352,23 +2007,41 @@ function App() {
     recommendationWorkerRef.current.postMessage({ type: 'init', data });
   }, [data, deferredDataWorkReady]);
 
-  useEffect(() => {
+  const startRecommendationSearch = useCallback(() => {
     if (!data || !persistenceReady || !workerReady || !recommendationWorkerRef.current) return;
+    const hasRecommendationCriteria = mode === 'vn' ? deferredSelectedVns.length > 0 : mode === 'character' ? deferredSelectedCharacters.length > 0 : tagSearchTags.size > 0 || tagSearchTraits.size > 0;
+    if (!hasRecommendationCriteria) {
+      recommendationRequestIdRef.current += 1;
+      setWorkerComputing(false);
+      setWorkerProgress(null);
+      setWorkerResult(emptyWorkerResult());
+      setShowRecommendations(false);
+      return;
+    }
     const requestId = recommendationRequestIdRef.current + 1;
     recommendationRequestIdRef.current = requestId;
+    recommendationDetailVersionRef.current += 1;
+    detailQueueRef.current = detailQueueRef.current.filter((item) => !item.key.startsWith('recommendation-'));
+    setRecommendationDetails({});
     setWorkerComputing(true);
+    const hasProfileSearch = mode === 'vn' ? deferredSelectedVns.length > 0 : mode === 'character' ? deferredSelectedCharacters.length > 0 : false;
+    const progressTotal = hasProfileSearch ? Math.max(1, profileSampleRounds) : 1;
+    setWorkerProgress(hasProfileSearch
+      ? { randomize: { current: 0, total: progressTotal }, search: { current: 0, total: progressTotal } }
+      : { search: { current: 0, total: progressTotal } });
+    setShowRecommendations(true);
     recommendationWorkerRef.current.postMessage({
       type: 'compute',
       requestId,
       params: {
-        selectedVnIds: selectedVns.map((vn) => vn.id),
-        selectedCharacterIds: selectedCharacters.map((character) => character.id),
-        activeVnProfileSpoilerOff: [...activeVnProfileSpoilerOff.entries()],
-        activeVnProfileSpoilerOn: [...activeVnProfileSpoilerOn.entries()],
-        activeCharacterProfileSpoilerOff: [...activeCharacterProfileSpoilerOff.entries()],
-        activeCharacterProfileSpoilerOn: [...activeCharacterProfileSpoilerOn.entries()],
-        activePriorityTags: [...activePriorityTags],
-        activePriorityTraits: [...activePriorityTraits],
+        selectedVnIds: mode === 'vn' ? deferredSelectedVns.map((vn) => vn.id) : [],
+        selectedCharacterIds: mode === 'character' ? deferredSelectedCharacters.map((character) => character.id) : [],
+        activePriorityTags: mode === 'vn' ? [...activePriorityTags] : [],
+        activePriorityTraits: mode === 'character' ? [...activePriorityTraits] : [],
+        tagLimit,
+        traitLimit,
+        profileSampleRounds,
+        includeSpoiler: renderShowSpoiler,
         tagSearchTags: [...tagSearchTags],
         tagSearchTraits: [...tagSearchTraits],
         tagSearchTagGroupsSpoilerOff: tagSearchTagGroupsSpoilerOff.map((group) => ({ selectedId: group.selectedId, alternatives: [...group.alternatives] })),
@@ -1386,7 +2059,15 @@ function App() {
         sortDirection
       }
     });
-  }, [data, persistenceReady, workerReady, selectedVns, selectedCharacters, activeVnProfileSpoilerOff, activeVnProfileSpoilerOn, activeCharacterProfileSpoilerOff, activeCharacterProfileSpoilerOn, activePriorityTags, activePriorityTraits, tagSearchTags, tagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
+  }, [data, persistenceReady, workerReady, mode, deferredSelectedVns, deferredSelectedCharacters, activePriorityTags, activePriorityTraits, tagLimit, traitLimit, profileSampleRounds, renderShowSpoiler, tagSearchTags, tagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
+
+  useEffect(() => {
+    recommendationRequestIdRef.current += 1;
+    setWorkerComputing(false);
+    setWorkerProgress(null);
+    setWorkerResult(emptyWorkerResult());
+    setShowRecommendations(false);
+  }, [mode, deferredSelectedVns, deferredSelectedCharacters, activePriorityTags, activePriorityTraits, tagLimit, traitLimit, profileSampleRounds, tagSearchTags, tagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
 
   const activeWorkerResult = renderShowSpoiler ? workerResult.spoilerOn : workerResult.spoilerOff;
 
@@ -1436,9 +2117,6 @@ function App() {
     .map((item) => item as MixedTagResult), [activeWorkerResult.mixedTagResults, activeWorkerResult.tagSearchVnResults, activeWorkerResult.tagSearchCharacterResults, vnById, characterById]);
 
   const dataBuildDate = data?.buildDateUtc8 ?? (data ? formatUtc8Date(data.generatedAt) : null);
-
-  if (error) return <main className="shell"><section className="panel error">{error}</section></main>;
-  if (!data) return <main className="shell loadingShell"><section className="panel loadingPanel"><div className="progressRing" style={{ '--progress': `${loadProgress}%` } as React.CSSProperties}><span>{loadProgress}%</span></div><strong>{t.loading}</strong></section></main>;
 
   const processDetailQueue = async (version: number) => {
     if (detailQueueRunningRef.current !== null) return;
@@ -1530,18 +2208,30 @@ function App() {
     }
   };
 
+  const clearSelections = () => {
+    if (mode === 'vn') setSelectedVns([]);
+    else if (mode === 'character') setSelectedCharacters([]);
+  };
+
+  const hasSelectedSamples = mode === 'vn' ? selectedVns.length > 0 : selectedCharacters.length > 0;
+
   const sortedVnRecommendations = vnRecommendations;
   const sortedCharacterRecommendations = characterRecommendations;
   const sortedTagSearchVnResults = tagSearchVnResults;
   const sortedTagSearchCharacterResults = tagSearchCharacterResults;
   const sortedMixedTagResults = mixedTagResults;
-  const tagModeResultCount = tagSearchTags.size && tagSearchTraits.size ? sortedMixedTagResults.length : tagSearchTags.size ? sortedTagSearchVnResults.length : sortedTagSearchCharacterResults.length;
+  const tagModeHasCriteria = Boolean(tagSearchTags.size || tagSearchTraits.size);
+  const currentModeHasCriteria = mode === 'vn' ? Boolean(selectedVns.length) : mode === 'character' ? Boolean(selectedCharacters.length) : tagModeHasCriteria;
+  const currentModeComputing = workerComputing && currentModeHasCriteria;
+  const profilePanelComputing = (mode === 'vn' || mode === 'character') && profileComputing;
+  const tagModeResultCount = tagSearchTags.size && tagSearchTraits.size ? sortedMixedTagResults.length : tagSearchTags.size ? sortedTagSearchVnResults.length : tagSearchTraits.size ? sortedTagSearchCharacterResults.length : 0;
   const activeResultCount = mode === 'vn' ? sortedVnRecommendations.length : mode === 'character' ? sortedCharacterRecommendations.length : tagModeResultCount;
   const activePageCount = pageCount(activeResultCount);
   const currentResultPage = Math.min(resultPage, activePageCount);
-  const recommendationStatusText = workerComputing
-    ? t.computing
-    : `${t.candidates}：${activeResultCount.toLocaleString()}，${t.perPage} ${RESULTS_PER_PAGE}，${t.currentPage} ${currentResultPage} / ${activePageCount} ${t.page}`;
+  const formatWorkerProgress = (progress?: { current: number; total: number }) => progress && progress.total > 0 ? `（${Math.min(progress.current, progress.total)}/${progress.total}）` : '';
+  const recommendationStatusText = showRecommendations
+    ? `${t.candidates}：${activeResultCount.toLocaleString()}，${t.perPage} ${RESULTS_PER_PAGE}，${t.currentPage} ${currentResultPage} / ${activePageCount} ${t.page}`
+    : t.choosePage;
   const visibleVnRecommendations = pageItems(sortedVnRecommendations, currentResultPage);
   const visibleCharacterRecommendations = pageItems(sortedCharacterRecommendations, currentResultPage);
   const visibleTagSearchVnResults = pageItems(sortedTagSearchVnResults, currentResultPage);
@@ -1563,16 +2253,22 @@ function App() {
     requestRecommendationDetailsForPage(currentResultPage);
   };
 
-  const showRecommendationResults = () => {
-    setShowRecommendations(true);
+  useEffect(() => {
+    if (!showRecommendations || currentModeComputing || !activeResultCount) return;
     requestVisibleRecommendationDetails();
+  }, [showRecommendations, currentModeComputing, activeResultCount, currentResultPage, renderShowSpoiler, mode, tagSearchTags.size, tagSearchTraits.size, sortedVnRecommendations, sortedCharacterRecommendations, sortedTagSearchVnResults, sortedTagSearchCharacterResults, sortedMixedTagResults]);
+
+  const showRecommendationResults = () => {
+    startRecommendationSearch();
   };
 
   const changeResultPage = (page: number) => {
     const nextPage = Math.min(activePageCount, Math.max(1, page));
     setResultPage(nextPage);
-    window.requestAnimationFrame(() => scrollToPanelTop(recommendationResultsRef.current));
-    if (showRecommendations) requestRecommendationDetailsForPage(nextPage);
+    window.requestAnimationFrame(() => {
+      resetScrollTop(recommendationListRef.current);
+      if (isMobile) scrollToPanelTop(recommendationResultsRef.current);
+    });
   };
 
   const profileItems = mode === 'vn'
@@ -1581,17 +2277,24 @@ function App() {
       return (renderShowBlockedTags || !meta?.blocked) && (renderShowTechnicalTags || !meta?.tech || priorityTags.has(id));
     }).sort((a, b) => b[1] - a[1])
     : [...characterProfile.entries()].sort((a, b) => b[1] - a[1]);
-  const groupedProfileTraits = mode === 'character' ? profileTraitGroups(profileItems, traitMeta, renderShowSexual) : [];
+  const groupedProfileTraits = mode === 'character' ? profileTraitGroups(profileItems, traitMeta, renderShowSexual, metaLanguage, uiLanguage) : [];
 
   const togglePriority = (id: number) => {
     const setter = mode === 'vn' ? setPriorityTags : setPriorityTraits;
-    setter((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+    startTransition(() => {
+      setter((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
     });
   };
+
+  const progressRingValue = Math.min(100, Math.max(0, loadState.progress));
+
+  if (error) return <LoadingErrorView error={error} language={uiLanguage} darkMode={darkMode} />;
+  if (!appReady || !data) return <main className={`shell loadingShell ${darkMode ? 'themeDark' : 'themeLight'}`}><section className="panel loadingPanel"><div className="progressRing"><svg viewBox="0 0 132 132" aria-hidden="true"><circle className="progressRingTrack" cx="66" cy="66" r="54" pathLength="100" /><circle className="progressRingValue" cx="66" cy="66" r="54" pathLength="100" strokeDasharray="100" strokeDashoffset={100 - progressRingValue} /></svg><span>{progressRingValue}%</span></div><strong>{t.loading}</strong><p className="loadingStage">{localizedStage(loadState.stage, uiLanguage)}</p>{loadState.detail ? <div className="loadingDetails"><span>{t.loadingDetailLoaded}：{formatBytes(loadState.detail.loaded)}</span><span>{t.loadingDetailTotal}：{loadState.detail.total ? formatBytes(loadState.detail.total) : t.loadingUnknown}</span><span>{t.loadingDetailSpeed}：{loadState.detail.speed ? formatSpeed(loadState.detail.speed) : t.loadingCalculating}</span></div> : null}</section></main>;
 
   return (
     <main className={`shell ${darkMode ? 'themeDark' : 'themeLight'}`}>
@@ -1650,49 +2353,52 @@ function App() {
           <label><input type="checkbox" checked={showSexual} onChange={(event) => { const checked = event.target.checked; startTransition(() => setShowSexual(checked)); }} /> {t.showR18}</label>
           <label><input type="checkbox" checked={showSpoiler} onChange={(event) => { const checked = event.target.checked; startTransition(() => setShowSpoiler(checked)); }} /> {t.allowSpoiler}</label>
           {(mode === 'vn' || mode === 'tag') ? <label><input type="checkbox" checked={showBlockedTags} onChange={(event) => { const checked = event.target.checked; startTransition(() => setShowBlockedTags(checked)); }} /> {t.showBlockedTags}</label> : null}
-          {mode === 'vn' ? <label><input type="checkbox" checked={showTechnicalTags} onChange={(event) => { const checked = event.target.checked; startTransition(() => setShowTechnicalTags(checked)); }} /> {t.showTechnicalTags}</label> : null}
+          {(mode === 'vn' || mode === 'tag') ? <label><input type="checkbox" checked={showTechnicalTags} onChange={(event) => { const checked = event.target.checked; startTransition(() => setShowTechnicalTags(checked)); }} /> {t.showTechnicalTags}</label> : null}
         </div>
         <div className="toolbarRow toolbarSpecific">
           {mode !== 'tag' ? <label className="searchBox">
             <span>{mode === 'vn' ? t.searchVn : t.searchCharacter}</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setSubmittedQuery(query); }} />
+            <input value={query} onChange={(event) => setActiveQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setActiveSubmittedQuery(query); }} />
           </label> : null}
-          {mode !== 'tag' ? <button onClick={() => setSubmittedQuery(query)}>{t.searchLocal}</button> : null}
+          {mode !== 'tag' ? <button onClick={() => setActiveSubmittedQuery(query)}>{t.searchLocal}</button> : null}
         </div>
       </section>
 
-      {mode === 'tag' ? <TagSearchPanel tags={data.tags} traits={data.traits} tagMeta={tagMeta} traitMeta={traitMeta} tagUsageCounts={tagUsageCounts} traitUsageCounts={traitUsageCounts} selectedTags={tagSearchTags} selectedTraits={tagSearchTraits} setSelectedTags={setTagSearchTags} setSelectedTraits={setTagSearchTraits} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} metaLanguage={metaLanguage} t={t} /> : <section className="grid two">
-        <div className="panel" ref={localResultsRef}>
+      {mode === 'tag' ? <TagSearchPanel tags={data.tags} traits={data.traits} tagMeta={tagMeta} traitMeta={traitMeta} tagUsageCounts={tagUsageCounts} traitUsageCounts={traitUsageCounts} selectedTags={tagSearchTags} selectedTraits={tagSearchTraits} setSelectedTags={setTagSearchTags} setSelectedTraits={setTagSearchTraits} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} /> : <section className="grid two">
+          <div className="panel localSearchPanel" ref={localSearchPanelRef}>
           <h2>{t.localResults}</h2>
           <p className="resultMeta">{t.candidates}：{searchResults.length.toLocaleString()}，{t.currentPage} {currentLocalSearchPage} / {localSearchPageCount} {t.page}</p>
           <div className="resultActions localSearchActions">
-            <button onClick={() => changeLocalSearchPage(currentLocalSearchPage - 1)} disabled={currentLocalSearchPage <= 1}>{isMobile && mode === 'vn' ? t.previousItem : t.previous}</button>
-            <button onClick={() => changeLocalSearchPage(currentLocalSearchPage + 1)} disabled={currentLocalSearchPage >= localSearchPageCount}>{isMobile && mode === 'vn' ? t.nextItem : t.next}</button>
+            <button onClick={() => changeLocalSearchPage(currentLocalSearchPage - 1)} disabled={currentLocalSearchPage <= 1}>{isMobile ? t.previousItem : t.previous}</button>
+            <button onClick={() => changeLocalSearchPage(currentLocalSearchPage + 1)} disabled={currentLocalSearchPage >= localSearchPageCount}>{isMobile ? t.nextItem : t.next}</button>
           </div>
-          <div className={`list localSearchList ${isMobile && mode === 'vn' ? 'mobileVnLocalList' : ''}`}>
+          <div ref={localSearchListRef} className={`list localSearchList ${isMobile ? 'mobileVnLocalList' : ''}`}>
             {visibleSearchResults.map((item) => mode === 'vn'
-              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} onAdd={() => addSelection(item)} />
-              : <CharacterCard key={`ch-${(item as Character).id}`} character={item as Character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} onAdd={() => addSelection(item)} />)}
+              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector((item as Vn).tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} onAdd={() => addSelection(item)} />
+              : <CharacterCard key={`ch-${(item as Character).id}`} character={item as Character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} onAdd={() => addSelection(item)} />)}
           </div>
         </div>
-        <div className="panel">
-          <h2>{t.selectedSamples}</h2>
-          <div className="list compact">
+        <div className="panel sampleProfilePanel" ref={sampleProfilePanelRef}>
+          <div className="samplePanelHead">
+            <h2>{t.selectedSamples}</h2>
+            <button className="sampleClearButton" onClick={clearSelections} disabled={!hasSelectedSamples}>{t.clear}</button>
+          </div>
+          <div className="list compact selectedSampleList">
             {mode === 'vn'
-              ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} detail={vnDetails[vn.id]} showMedia showDescription={false} onRemove={() => setSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
-              : selectedCharacters.map((character) => <CharacterCard key={`selected-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} onRemove={() => setSelectedCharacters((list) => list.filter((it) => it.id !== character.id))} />)}
+              ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={vnDetails[vn.id]} showMedia showDescription={false} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector(vn.tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} onRemove={() => setSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
+              : selectedCharacters.map((character) => <CharacterCard key={`selected-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} onRemove={() => setSelectedCharacters((list) => list.filter((it) => it.id !== character.id))} />)}
           </div>
           <div className="profileHead">
             <h3>{t.profile}</h3>
           </div>
-          {mode === 'vn' ? <div className="chips profileChips">
+          {profilePanelComputing ? <div className="empty profileComputingNotice">{t.computing}</div> : mode === 'vn' ? <div className="chips profileChips">
             {profileItems.map(([id, value]) => {
               const meta = tagMeta.get(id);
               if (!meta) return null;
-              const name = metaName(meta, renderShowSexual, metaLanguage);
+              const name = metaName(meta, renderShowSexual, metaLanguage, uiLanguage);
               const priority = priorityTags.has(id);
               const chipSpoilerClass = spoilerClass(vnProfileSpoilers.get(id) ?? 0);
-              return <button key={`g-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${meta.tech ? 'technical' : ''} ${meta.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
+              return <button key={`g-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${meta.tech ? 'technical' : ''} ${meta.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
             })}
           </div> : <div className="traitGroupList profileChips">
             {groupedProfileTraits.map(([label, items]) => <div className="traitGroup" key={`profile-group-${label}`}>
@@ -1701,10 +2407,10 @@ function App() {
                 {items.map(([id, value]) => {
                   const meta = traitMeta.get(id);
                   if (!meta) return null;
-                  const name = metaName(meta, renderShowSexual, metaLanguage);
+                  const name = metaName(meta, renderShowSexual, metaLanguage, uiLanguage);
                   const priority = priorityTraits.has(id);
                   const chipSpoilerClass = spoilerClass(characterProfileSpoilers.get(id) ?? 0);
-                  return <button key={`i-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
+                  return <button key={`i-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
                 })}
               </div>
             </div>)}
@@ -1716,7 +2422,12 @@ function App() {
         <div className="sectionHead">
           <div>
             <h2>{mode === 'vn' ? t.vnRecommendations : mode === 'character' ? t.characterRecommendations : t.tagResults}</h2>
-            <p>{recommendationStatusText}</p>
+            {currentModeComputing ? <div className="recommendationProgress">
+              {workerProgress?.randomize ? <p>{t.randomizingProfile}{formatWorkerProgress(workerProgress.randomize)}</p> : null}
+              {workerProgress?.search ? <p>{t.computing}{formatWorkerProgress(workerProgress.search)}</p> : null}
+              {workerProgress?.fit ? <p>{t.fittingResults}</p> : null}
+              {!workerProgress ? <p>{t.computing}</p> : null}
+            </div> : <p>{recommendationStatusText}</p>}
           </div>
           <div className="resultControlBar">
             <label className="selectControl">{t.sort}
@@ -1735,6 +2446,7 @@ function App() {
               </select>
             </label>
             {(mode === 'vn' || mode === 'character' || mode === 'tag') ? <label className="votes">{t.minVotes} <input type="number" min={0} value={minVotes} onChange={(event) => setMinVotes(Number(event.target.value))} /></label> : null}
+            {(mode === 'vn' || mode === 'character' || mode === 'tag') ? <label className="votes limitControl">{t.profileSampleRounds} <input type="number" min={1} max={1024} value={profileSampleRounds} onChange={(event) => setProfileSampleRounds(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label> : null}
             {mode === 'vn'
               ? <label className="votes limitControl">{t.tagLimit} <input type="number" min={1} max={60} value={tagLimit} onChange={(event) => setTagLimit(Number(event.target.value))} /></label>
               : mode === 'character' ? <label className="votes limitControl">{t.traitLimit} <input type="number" min={1} max={80} value={traitLimit} onChange={(event) => setTraitLimit(Number(event.target.value))} /></label> : null}
@@ -1750,20 +2462,20 @@ function App() {
           <div className="resultActions">
             <button onClick={() => changeResultPage(currentResultPage - 1)} disabled={currentResultPage <= 1}>{t.previous}</button>
             <button onClick={() => changeResultPage(currentResultPage + 1)} disabled={currentResultPage >= activePageCount}>{t.next}</button>
-            <button onClick={showRecommendationResults} disabled={workerComputing || !activeResultCount}>{t.loadPage}</button>
+            <button onClick={showRecommendationResults} disabled={currentModeComputing || !currentModeHasCriteria || !workerReady}>{t.loadPage}</button>
           </div>
         </div>
-        {showRecommendations ? <div className="list results">
+        {showRecommendations && activeResultCount > 0 ? <div ref={recommendationListRef} className="list results">
           {mode === 'vn'
-            ? visibleVnRecommendations.map((vn) => <VnCard key={`rec-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} relations={vn.relations.map(([id, relation]) => vnById.get(id) ? `${relation}: ${vnById.get(id)?.title}` : null).filter(Boolean) as string[]} />)
+            ? visibleVnRecommendations.map((vn) => <VnCard key={`rec-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} vns={vnById} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} relations={vn.relations} />)
             : mode === 'character'
-              ? visibleCharacterRecommendations.map((character) => <CharacterCard key={`rec-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} />)
+              ? visibleCharacterRecommendations.map((character) => <CharacterCard key={`rec-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} />)
               : tagSearchTags.size && tagSearchTraits.size
-                ? visibleMixedTagResults.map((result) => <MixedTagCard key={`mixed-${result.vn.id}-${result.character.id}`} result={result} tagMeta={tagMeta} traitMeta={traitMeta} vns={vnById} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} metaLanguage={metaLanguage} vnDetail={recommendationDetails[`v${result.vn.id}`]} characterDetail={recommendationDetails[`c${result.character.id}`]} minVotes={minVotes} roleFilter={tagRoleFilter} />)
+                ? visibleMixedTagResults.map((result) => <MixedTagCard key={`mixed-${result.vn.id}-${result.character.id}`} result={result} tagMeta={tagMeta} traitMeta={traitMeta} vns={vnById} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} vnDetail={recommendationDetails[`v${result.vn.id}`]} characterDetail={recommendationDetails[`c${result.character.id}`]} minVotes={minVotes} roleFilter={tagRoleFilter} />)
                 : tagSearchTags.size
-                  ? visibleTagSearchVnResults.map((vn) => <VnCard key={`tag-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} />)
-                  : visibleTagSearchCharacterResults.map((character) => <CharacterCard key={`tag-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} minVotes={minVotes} roleFilter={tagRoleFilter} />)}
-        </div> : workerComputing ? null : <div className="empty">{`${t.candidates}：${activeResultCount.toLocaleString()}。${t.choosePage}`}</div>}
+                  ? visibleTagSearchVnResults.map((vn) => <VnCard key={`tag-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} vns={vnById} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} />)
+                  : visibleTagSearchCharacterResults.map((character) => <CharacterCard key={`tag-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} minVotes={minVotes} roleFilter={tagRoleFilter} />)}
+        </div> : showRecommendations && !currentModeComputing ? <div className="empty">{t.noRecommendationResults}</div> : null}
       </section>
 
       <footer className="footer">
@@ -1843,27 +2555,15 @@ function metaChipClass(item: Meta) {
   return `chip ${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`;
 }
 
-function directMetaUsageCounts(items: Array<{ id: number; tags?: Pair[]; traits?: TraitPair[] }>, metas: Meta[], meta: Map<number, Meta>, field: 'tags' | 'traits', kind: 'tag' | 'trait') {
-  const direct = new Map<number, Set<number>>();
-  for (const item of items) {
-    const ids = new Set<number>();
-    for (const pair of item[field] ?? []) {
-      const metaItem = meta.get(pair[0]);
-      if (!metaItem || itemLie(pair, kind)) continue;
-      ids.add(pair[0]);
-    }
-    for (const id of ids) {
-      if (!direct.has(id)) direct.set(id, new Set());
-      direct.get(id)?.add(item.id);
-    }
-  }
-  return new Map(metas.map((metaItem) => [metaItem.id, direct.get(metaItem.id)?.size ?? 0]));
+function usageEntriesToSetMap(entries: [number, number[]][] | undefined, metas: Meta[]) {
+  if (!entries) return null;
+  const source = new Map(entries.map(([id, itemIds]) => [id, new Set(itemIds)]));
+  return new Map(metas.map((metaItem) => [metaItem.id, source.get(metaItem.id) ?? new Set<number>()]));
 }
 
-function searchableMetaUsageCounts(items: Array<{ id: number; votes?: number; vns?: [number, string, number][]; tags?: Pair[]; traits?: TraitPair[] }>, metas: Meta[], meta: Map<number, Meta>, field: 'tags' | 'traits', kind: 'tag' | 'trait', includeSexual: boolean, includeSpoiler: boolean, itemAllowed: (item: { id: number; votes?: number; vns?: [number, string, number][]; tags?: Pair[]; traits?: TraitPair[] }) => boolean) {
+function directMetaUsageSets(items: Array<{ id: number; tags?: Pair[]; traits?: TraitPair[] }>, metas: Meta[], meta: Map<number, Meta>, field: 'tags' | 'traits', kind: 'tag' | 'trait', includeSpoiler: boolean) {
   const direct = new Map<number, Set<number>>();
   for (const item of items) {
-    if (!itemAllowed(item)) continue;
     const ids = new Set<number>();
     for (const pair of item[field] ?? []) {
       const metaItem = meta.get(pair[0]);
@@ -1876,57 +2576,83 @@ function searchableMetaUsageCounts(items: Array<{ id: number; votes?: number; vn
       direct.get(id)?.add(item.id);
     }
   }
-  const children = metaChildrenMap(metas);
-  return new Map(metas.map((metaItem) => {
-    if (!includeSexual && metaItem.sexual) return [metaItem.id, 0];
-    if (!includeSpoiler && metaItem.defaultspoil && metaItem.defaultspoil > 0) return [metaItem.id, 0];
-    const alternatives = new Set<number>([metaItem.id]);
-    const includeSexualDescendants = includeSexual && metaItem.sexual === true;
-    const includeBlockedDescendants = kind === 'trait' || metaItem.blocked === true;
-    for (const child of metaSearchDescendants(metaItem, children, includeSexualDescendants, includeSpoiler, includeBlockedDescendants)) alternatives.add(child.id);
-    const used = new Set<number>();
-    for (const id of alternatives) for (const itemId of direct.get(id) ?? []) used.add(itemId);
-    return [metaItem.id, used.size];
-  }));
+  return new Map(metas.map((metaItem) => [metaItem.id, direct.get(metaItem.id) ?? new Set<number>()]));
 }
 
-function TagSearchPanel({ tags, traits, tagMeta, traitMeta, tagUsageCounts, traitUsageCounts, selectedTags, selectedTraits, setSelectedTags, setSelectedTraits, showSexual, showSpoiler, showBlockedTags, metaLanguage, t }: { tags: Meta[]; traits: Meta[]; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; tagUsageCounts: Map<number, number>; traitUsageCounts: Map<number, number>; selectedTags: Set<number>; selectedTraits: Set<number>; setSelectedTags: React.Dispatch<React.SetStateAction<Set<number>>>; setSelectedTraits: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; metaLanguage: MetaLanguage; t: Record<string, string> }) {
-  const [tagSelectorHeight, setTagSelectorHeight] = useState(520);
-  const [traitSelectorHeight, setTraitSelectorHeight] = useState(520);
+function aggregateMetaUsageCounts(directSets: Map<number, Set<number>>, metas: Meta[], kind: 'tag' | 'trait', showSexual: boolean, showSpoiler: boolean, showBlockedTags = true, showTechnicalTags = true) {
+  const children = metaChildrenMap(metas);
+  const aggregate = new Map<number, Set<number>>();
+  const usageFor = (item: Meta, path = new Set<number>()): Set<number> => {
+    if (path.has(item.id)) return new Set();
+    const cached = aggregate.get(item.id);
+    if (cached) return cached;
+    const nextPath = new Set(path);
+    nextPath.add(item.id);
+    const result = new Set(directSets.get(item.id) ?? []);
+    for (const child of children.get(item.id) ?? []) {
+      if (!metaAllowedByFilters(child, kind, showSexual, showSpoiler, showBlockedTags, showTechnicalTags)) continue;
+      for (const usageId of usageFor(child, nextPath)) result.add(usageId);
+    }
+    aggregate.set(item.id, result);
+    return result;
+  };
+  return new Map(metas.map((metaItem) => [metaItem.id, metaAllowedByFilters(metaItem, kind, showSexual, showSpoiler, showBlockedTags, showTechnicalTags) ? usageFor(metaItem).size : 0]));
+}
+
+function TagSearchPanel({ tags, traits, tagMeta, traitMeta, tagUsageCounts, traitUsageCounts, selectedTags, selectedTraits, setSelectedTags, setSelectedTraits, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t }: { tags: Meta[]; traits: Meta[]; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; tagUsageCounts: Map<number, number>; traitUsageCounts: Map<number, number>; selectedTags: Set<number>; selectedTraits: Set<number>; setSelectedTags: React.Dispatch<React.SetStateAction<Set<number>>>; setSelectedTraits: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string> }) {
+  const [tagSelectorHeight, setTagSelectorHeight] = useState(() => loadMetaSelectorState('tag')?.height ?? 520);
+  const [traitSelectorHeight, setTraitSelectorHeight] = useState(() => loadMetaSelectorState('trait')?.height ?? 520);
+  const [tagCollapseVersion, setTagCollapseVersion] = useState(0);
+  const [traitCollapseVersion, setTraitCollapseVersion] = useState(0);
   return <section className="tagSearchGrid">
     <div className="panel">
       <div className="sectionHead compactHead">
         <div><h2>{t.tagPanelTitle}</h2><p>{t.tagPanelDesc}</p></div>
-        <button onClick={() => setSelectedTags(new Set())} disabled={!selectedTags.size}>{t.clear}</button>
+        <div className="buttonRow"><button onClick={() => setTagCollapseVersion((version) => version + 1)}>{t.collapseAll}</button><button onClick={() => setSelectedTags(new Set())} disabled={!selectedTags.size}>{t.clear}</button></div>
       </div>
-      <MetaSelector kind="tag" items={tags} meta={tagMeta} usageCounts={tagUsageCounts} selected={selectedTags} setSelected={setSelectedTags} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} t={t} height={tagSelectorHeight} setHeight={setTagSelectorHeight} />
+      <MetaSelector kind="tag" items={tags} meta={tagMeta} usageCounts={tagUsageCounts} selected={selectedTags} setSelected={setSelectedTags} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={tagSelectorHeight} setHeight={setTagSelectorHeight} collapseVersion={tagCollapseVersion} />
     </div>
     <div className="panel">
       <div className="sectionHead compactHead">
         <div><h2>{t.traitPanelTitle}</h2><p>{t.traitPanelDesc}</p></div>
-        <button onClick={() => setSelectedTraits(new Set())} disabled={!selectedTraits.size}>{t.clear}</button>
+        <div className="buttonRow"><button onClick={() => setTraitCollapseVersion((version) => version + 1)}>{t.collapseAll}</button><button onClick={() => setSelectedTraits(new Set())} disabled={!selectedTraits.size}>{t.clear}</button></div>
       </div>
-      <MetaSelector kind="trait" items={traits} meta={traitMeta} usageCounts={traitUsageCounts} selected={selectedTraits} setSelected={setSelectedTraits} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags metaLanguage={metaLanguage} t={t} height={traitSelectorHeight} setHeight={setTraitSelectorHeight} />
+      <MetaSelector kind="trait" items={traits} meta={traitMeta} usageCounts={traitUsageCounts} selected={selectedTraits} setSelected={setSelectedTraits} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags showTechnicalTags metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={traitSelectorHeight} setHeight={setTraitSelectorHeight} collapseVersion={traitCollapseVersion} />
     </div>
   </section>;
 }
 
-function metaSelectorGroupTooltip(kind: 'tag' | 'trait', label: string, groupItems: Meta[], meta: Map<number, Meta>, showSexual: boolean, metaLanguage: MetaLanguage) {
+function metaTreeGroupClass(kind: 'tag' | 'trait', label: string, groupItems: Meta[], meta: Map<number, Meta>) {
+  let groupMeta: Meta | undefined;
+  if (kind === 'tag') {
+    groupMeta = TAG_TREE_GROUP_ROOT_IDS.has(Number(label)) ? meta.get(Number(label)) : undefined;
+    if (!groupMeta) {
+      const fallbackClass: Record<string, MetaFilterClass> = { cont: 'normal', ero: 'sexual', tech: 'technical', other: 'normal' };
+      return ` metaRootGroup metaRootGroup-${fallbackClass[label] ?? 'normal'}`;
+    }
+  } else {
+    groupMeta = groupItems[0] ? traitGroupMeta(groupItems[0], meta) : undefined;
+  }
+  return ` metaRootGroup metaRootGroup-${groupMeta ? metaFilterClass(groupMeta, kind) : 'normal'}`;
+}
+
+function metaSelectorGroupTooltip(kind: 'tag' | 'trait', label: string, groupItems: Meta[], meta: Map<number, Meta>, showSexual: boolean, metaLanguage: MetaLanguage, uiLanguage: UiLanguage, t: Record<string, string>) {
+  if (kind === 'tag' && TAG_TREE_GROUP_ROOT_IDS.has(Number(label)) && groupItems[0]) return metaTooltip(groupItems[0], showSexual, metaLanguage, uiLanguage);
   if (kind === 'trait') {
     const group = groupItems.map((item) => traitGroupMeta(item, meta)).find(Boolean);
-    if (group) return metaTooltip(group, showSexual, metaLanguage);
+    if (group) return metaTooltip(group, showSexual, metaLanguage, uiLanguage);
   }
   const descriptions: Record<string, string> = {
-    cont: '作品内容相关标签，用于描述题材、设定、剧情元素与表现形式。',
-    ero: 'R18 相关标签。默认仅用于展示，不参与搜索；只有被选为重点标签时才参与搜索。',
-    tech: '技术性标签。默认仅展示，不参与搜索；只有被选为重点标签时才参与搜索。',
-    other: '其他未归入主要分类的标签。'
+    cont: t.metaCategoryContentTooltip,
+    ero: t.metaCategoryR18Tooltip,
+    tech: t.metaCategoryTechnicalTooltip,
+    other: t.metaCategoryOtherTooltip
   };
   return descriptions[label] ?? label;
 }
 
-function SelectedMetaSummary({ selected, meta, showSexual, metaLanguage, t, toggle }: { selected: Set<number>; meta: Map<number, Meta>; showSexual: boolean; metaLanguage: MetaLanguage; t: Record<string, string>; toggle: (id: number) => void }) {
-  const selectedItems = [...selected].map((id) => meta.get(id)).filter((item): item is Meta => Boolean(item)).sort((a, b) => metaName(a, showSexual, metaLanguage).localeCompare(metaName(b, showSexual, metaLanguage)));
+function SelectedMetaSummary({ selected, meta, showSexual, metaLanguage, uiLanguage, t, toggle }: { selected: Set<number>; meta: Map<number, Meta>; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; toggle: (id: number) => void }) {
+  const selectedItems = [...selected].map((id) => meta.get(id)).filter((item): item is Meta => Boolean(item)).sort((a, b) => metaName(a, showSexual, metaLanguage, uiLanguage).localeCompare(metaName(b, showSexual, metaLanguage, uiLanguage)));
   if (!selectedItems.length) return null;
   return <div className="selectedMetaBox">
     <div className="selectedMetaTitle">{t.selectedMeta} <span>{selectedItems.length}</span></div>
@@ -1934,17 +2660,20 @@ function SelectedMetaSummary({ selected, meta, showSexual, metaLanguage, t, togg
       {selectedItems.map((item) => {
         const ancestors = metaAncestors(item, meta);
         return <div className="selectedMetaItem" key={`selected-meta-${item.id}`}>
-          <button className="chip selectedMetaChip" title={metaTooltip(item, showSexual, metaLanguage)} onClick={() => toggle(item.id)}>★ {metaName(item, showSexual, metaLanguage)}</button>
-          {ancestors.length ? <div className="selectedMetaParents"><span>{t.parentMeta}</span>{ancestors.map((parent) => <span key={`selected-meta-${item.id}-parent-${parent.id}`} className={metaChipClass(parent)} title={metaTooltip(parent, showSexual, metaLanguage)}>{metaName(parent, showSexual, metaLanguage)}</span>)}</div> : null}
+          <button className="chip selectedMetaChip" title={metaTooltip(item, showSexual, metaLanguage, uiLanguage)} onClick={() => toggle(item.id)}>★ {metaName(item, showSexual, metaLanguage, uiLanguage)}</button>
+          {ancestors.length ? <div className="selectedMetaParents"><span>{t.parentMeta}</span>{ancestors.map((parent) => <span key={`selected-meta-${item.id}-parent-${parent.id}`} className={metaChipClass(parent)} title={metaTooltip(parent, showSexual, metaLanguage, uiLanguage)}>{metaName(parent, showSexual, metaLanguage, uiLanguage)}</span>)}</div> : null}
         </div>;
       })}
     </div>
   </div>;
 }
 
-function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, showSexual, showSpoiler, showBlockedTags, metaLanguage, t, height, setHeight }: { kind: 'tag' | 'trait'; items: Meta[]; meta: Map<number, Meta>; usageCounts: Map<number, number>; selected: Set<number>; setSelected: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; metaLanguage: MetaLanguage; t: Record<string, string>; height: number; setHeight: React.Dispatch<React.SetStateAction<number>> }) {
-  const [query, setQuery] = useState('');
-  const [openNodeIds, setOpenNodeIds] = useState<Set<number>>(() => new Set());
+function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t, height, setHeight, collapseVersion }: { kind: 'tag' | 'trait'; items: Meta[]; meta: Map<number, Meta>; usageCounts: Map<number, number>; selected: Set<number>; setSelected: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; height: number; setHeight: React.Dispatch<React.SetStateAction<number>>; collapseVersion: number }) {
+  const persistedSelectorState = useMemo(() => loadMetaSelectorState(kind), [kind]);
+  const [query, setQuery] = useState(() => persistedSelectorState?.query ?? '');
+  const [openNodeIds, setOpenNodeIds] = useState<Set<number>>(() => new Set(persistedSelectorState?.openNodeIds ?? []));
+  const [openGroupLabels, setOpenGroupLabels] = useState<Set<string>>(() => new Set(persistedSelectorState?.openGroupLabels ?? []));
+  const restoredScrollRef = useRef(false);
   const selectorRef = useRef<HTMLDivElement>(null);
   const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -1979,61 +2708,134 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
     window.addEventListener('pointerup', stop);
     window.addEventListener('pointercancel', stop);
   };
-  const baseVisible = items.filter((item) => {
-    if (!showSexual && item.sexual) return false;
-    if (!showSpoiler && item.defaultspoil && item.defaultspoil > 0) return false;
-    if (kind === 'tag' && item.blocked && !showBlockedTags) return false;
-    return item.applicable !== false;
-  });
-  const q = text(query);
-  const titleMatches = q ? baseVisible.filter((item) => metaAllNames(item).includes(q)) : [];
-  const matchedItems = q ? (titleMatches.length ? titleMatches : baseVisible.filter((item) => metaAllDescriptions(item).includes(q))) : baseVisible;
-  const matchedIds = new Set(matchedItems.map((item) => item.id));
-  const visibleIds = new Set<number>();
-  for (const item of matchedItems) {
-    visibleIds.add(item.id);
-    const stack = [...(item.parents ?? [])];
-    while (stack.length) {
-      const id = stack.pop();
-      if (!id || visibleIds.has(id)) continue;
-      const parent = meta.get(id);
-      if (!parent) continue;
-      if (!showSexual && parent.sexual) continue;
-      if (!showSpoiler && parent.defaultspoil && parent.defaultspoil > 0) continue;
-      if (kind === 'tag' && parent.blocked && !showBlockedTags) continue;
-      visibleIds.add(id);
-      stack.push(...(parent.parents ?? []));
+  useEffect(() => {
+    if (!collapseVersion) return;
+    setOpenNodeIds(new Set());
+    setOpenGroupLabels(new Set());
+  }, [collapseVersion]);
+  useEffect(() => {
+    if (restoredScrollRef.current) return;
+    const element = selectorRef.current;
+    if (!element) return;
+    restoredScrollRef.current = true;
+    window.requestAnimationFrame(() => {
+      element.scrollTop = persistedSelectorState?.scrollTop ?? 0;
+    });
+  }, [persistedSelectorState]);
+  useEffect(() => {
+    const element = selectorRef.current;
+    const state = {
+      query,
+      openNodeIds: [...openNodeIds],
+      openGroupLabels: [...openGroupLabels],
+      scrollTop: element?.scrollTop ?? persistedSelectorState?.scrollTop ?? 0,
+      height
+    };
+    const timeout = window.setTimeout(() => saveMetaSelectorState(kind, state), 120);
+    return () => window.clearTimeout(timeout);
+  }, [kind, query, openNodeIds, openGroupLabels, height, persistedSelectorState]);
+  const deferredQuery = useDeferredValue(query);
+  const treeIndex = useMemo(() => {
+    const treeItems = items;
+    const itemIds = new Set(treeItems.map((item) => item.id));
+    const children = new Map<number, Meta[]>();
+    const groupRootIds = kind === 'tag' ? TAG_TREE_GROUP_ROOT_IDS : new Set<number>();
+    for (const item of treeItems) {
+      for (const parentId of item.parents ?? []) {
+        if (!itemIds.has(parentId)) continue;
+        const list = children.get(parentId) ?? [];
+        list.push(item);
+        children.set(parentId, list);
+      }
     }
-  }
-  const visible = baseVisible.filter((item) => !q || visibleIds.has(item.id));
-  const visibleSet = new Set(visible.map((item) => item.id));
-  const children = new Map<number, Meta[]>();
-  for (const item of visible) {
-    for (const parentId of item.parents ?? []) {
-      if (!visibleSet.has(parentId)) continue;
-      children.set(parentId, [...(children.get(parentId) ?? []), item]);
+    for (const list of children.values()) list.sort((a, b) => compareMetaTreeName(a, b, true, metaLanguage));
+    const searchNames = new Map<number, string>();
+    const searchDescriptions = new Map<number, string>();
+    for (const item of treeItems) {
+      searchNames.set(item.id, metaAllNames(item));
+      searchDescriptions.set(item.id, metaAllDescriptions(item));
     }
-  }
-  const roots = visible.filter((item) => !(item.parents ?? []).some((parentId) => visibleSet.has(parentId)));
-  const groups = new Map<string, Meta[]>();
-  for (const item of roots) {
-    const label = kind === 'tag' ? item.cat ?? 'other' : traitGroupLabel(item, meta);
-    groups.set(label, [...(groups.get(label) ?? []), item]);
-  }
-  const treeCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    const visit = (item: Meta, path = new Set<number>()) => {
-      if (path.has(item.id)) return 0;
+    return { treeItems, itemIds, children, searchNames, searchDescriptions, groupRootIds };
+  }, [items, metaLanguage, meta, kind]);
+  const isAllowedByFilter = useCallback((item: Meta) => metaAllowedByFilters(item, kind, showSexual, showSpoiler, showBlockedTags, showTechnicalTags), [kind, showSexual, showSpoiler, showBlockedTags, showTechnicalTags]);
+  const hasAllowedParentPath = useCallback((item: Meta, path = new Set<number>()): boolean => {
+    if (path.has(item.id)) return false;
+    const nextPath = new Set(path);
+    nextPath.add(item.id);
+    const parentIds = (item.parents ?? []).filter((parentId) => treeIndex.itemIds.has(parentId) && !treeIndex.groupRootIds.has(parentId));
+    if (!parentIds.length) return true;
+    return parentIds.some((parentId) => {
+      const parent = meta.get(parentId);
+      return Boolean(parent && isAllowedByFilter(parent) && hasAllowedParentPath(parent, nextPath));
+    });
+  }, [treeIndex.itemIds, treeIndex.groupRootIds, meta, isAllowedByFilter]);
+  const isVisible = useCallback((item: Meta) => {
+    if (!treeIndex.itemIds.has(item.id)) return false;
+    if (!isAllowedByFilter(item)) return false;
+    return hasAllowedParentPath(item);
+  }, [treeIndex.itemIds, isAllowedByFilter, hasAllowedParentPath]);
+  const hasVisibleParent = useCallback((item: Meta) => (item.parents ?? []).some((parentId) => {
+    const parent = meta.get(parentId);
+    return parent ? isVisible(parent) : false;
+  }), [meta, isVisible]);
+  const isDescendantOf = useCallback((item: Meta, ancestorId: number, path = new Set<number>()): boolean => {
+    if (path.has(item.id)) return false;
+    if ((item.parents ?? []).includes(ancestorId)) return true;
+    const nextPath = new Set(path);
+    nextPath.add(item.id);
+    return (item.parents ?? []).some((parentId) => {
+      const parent = meta.get(parentId);
+      return parent ? isDescendantOf(parent, ancestorId, nextPath) : false;
+    });
+  }, [meta]);
+  const shouldDisplayUnderParent = useCallback((parent: Meta, child: Meta) => !(child.parents ?? []).some((parentId) => {
+    if (parentId === parent.id) return false;
+    const otherParent = meta.get(parentId);
+    return otherParent ? isVisible(otherParent) && isDescendantOf(otherParent, parent.id) : false;
+  }), [meta, isVisible, isDescendantOf]);
+  const hasVisibleDisplayChildren = useCallback((item: Meta, visibleIds: Set<number> | null) => (treeIndex.children.get(item.id) ?? []).some((child) => isVisible(child) && shouldDisplayUnderParent(item, child) && (!visibleIds || visibleIds.has(child.id))), [treeIndex.children, isVisible, shouldDisplayUnderParent]);
+  const compareMetaTreeDisplay = useCallback((a: Meta, b: Meta, visibleIds: Set<number> | null) => {
+    const childDiff = Number(hasVisibleDisplayChildren(b, visibleIds)) - Number(hasVisibleDisplayChildren(a, visibleIds));
+    return childDiff || compareMetaTreeName(a, b, true, metaLanguage);
+  }, [hasVisibleDisplayChildren, metaLanguage]);
+  const q = text(deferredQuery);
+  const filteredTree = useMemo(() => {
+    if (!q) return { visibleIds: null as Set<number> | null, matchedIds: new Set<number>() };
+    const titleMatchedIds = new Set<number>();
+    for (const item of treeIndex.treeItems) {
+      if (item.applicable === false || !isVisible(item)) continue;
+      if ((treeIndex.searchNames.get(item.id) ?? '').includes(q)) titleMatchedIds.add(item.id);
+    }
+    const matchedIds = titleMatchedIds.size ? titleMatchedIds : new Set<number>();
+    if (!titleMatchedIds.size) {
+      for (const item of treeIndex.treeItems) {
+        if (item.applicable === false || !isVisible(item)) continue;
+        if ((treeIndex.searchDescriptions.get(item.id) ?? '').includes(q)) matchedIds.add(item.id);
+      }
+    }
+    const visibleIds = new Set<number>();
+    const addVisibleAncestors = (item: Meta, path = new Set<number>()) => {
+      if (path.has(item.id)) return;
       const nextPath = new Set(path);
       nextPath.add(item.id);
-      let count = 1;
-      for (const child of children.get(item.id) ?? []) count += visit(child, nextPath);
-      counts.set(item.id, count);
-      return count;
+      const displayParentIds = (item.parents ?? []).filter((parentId) => {
+        const parent = meta.get(parentId);
+        return parent && treeIndex.itemIds.has(parentId) && isVisible(parent) && shouldDisplayUnderParent(parent, item);
+      });
+      if (!displayParentIds.length) return;
+      for (const parentId of displayParentIds) {
+        visibleIds.add(parentId);
+        const parent = meta.get(parentId);
+        if (parent) addVisibleAncestors(parent, nextPath);
+      }
     };
-    for (const item of roots) visit(item);
-    return counts;
-  }, [children, roots]);
+    for (const id of matchedIds) {
+      visibleIds.add(id);
+      const item = meta.get(id);
+      if (item) addVisibleAncestors(item);
+    }
+    return { visibleIds, matchedIds };
+  }, [q, treeIndex, isVisible, meta, shouldDisplayUnderParent]);
   const selectedDescendantIds = useMemo(() => {
     const ids = new Set<number>();
     for (const id of selected) {
@@ -2044,36 +2846,85 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
     for (const id of selected) ids.delete(id);
     return ids;
   }, [selected, meta]);
-  const labels: Record<string, string> = { cont: '内容', ero: 'R18', tech: '技术', other: '其他' };
-  const toggle = (id: number) => setSelected((current) => {
+  const labels: Record<string, string> = { cont: t.metaCategoryContent, ero: 'R18', tech: t.metaCategoryTechnical, other: t.metaCategoryOther };
+  const toggle = useCallback((id: number) => setSelected((current) => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     return next;
-  });
-  const sortMeta = (list: Meta[]) => [...list].sort((a, b) => compareMetaTreeName(a, b, showSexual, metaLanguage));
+  }), [setSelected]);
+  const groupEntries = useMemo(() => {
+    const groups = new Map<string, Meta[]>();
+    const addToGroup = (label: string, item: Meta) => {
+      const list = groups.get(label) ?? [];
+      if (!list.some((current) => current.id === item.id)) list.push(item);
+      groups.set(label, list);
+    };
+    for (const item of treeIndex.treeItems) {
+      if (!isVisible(item)) continue;
+      if (filteredTree.visibleIds && !filteredTree.visibleIds.has(item.id)) continue;
+      if (hasVisibleParent(item)) continue;
+      const label = kind === 'tag' && treeIndex.groupRootIds.has(item.id) ? String(item.id) : kind === 'tag' ? item.cat ?? 'other' : traitGroupLabel(item, meta, showSexual, metaLanguage, uiLanguage);
+      if (kind === 'trait' && item.applicable === false && label === metaName(item, true, metaLanguage, uiLanguage)) {
+        const childItems = (treeIndex.children.get(item.id) ?? []).filter((child) => isVisible(child) && shouldDisplayUnderParent(item, child) && (!filteredTree.visibleIds || filteredTree.visibleIds.has(child.id)));
+        for (const child of childItems) addToGroup(label, child);
+        continue;
+      }
+      addToGroup(label, item);
+    }
+    for (const list of groups.values()) list.sort((a, b) => compareMetaTreeDisplay(a, b, filteredTree.visibleIds));
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [treeIndex.treeItems, treeIndex.children, isVisible, filteredTree.visibleIds, hasVisibleParent, shouldDisplayUnderParent, compareMetaTreeDisplay, kind, meta]);
+  const saveScrollState = useCallback(() => {
+    const element = selectorRef.current;
+    saveMetaSelectorState(kind, {
+      query,
+      openNodeIds: [...openNodeIds],
+      openGroupLabels: [...openGroupLabels],
+      scrollTop: element?.scrollTop ?? 0,
+      height
+    });
+  }, [kind, query, openNodeIds, openGroupLabels, height]);
   return <div className="metaSelectorWrap">
     <label className="metaFilter"><span>{kind === 'tag' ? t.tagFilter : t.traitFilter}</span><input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-    <SelectedMetaSummary selected={selected} meta={meta} showSexual={showSexual} metaLanguage={metaLanguage} t={t} toggle={toggle} />
-    <div ref={selectorRef} className="metaSelector" style={{ height }}>
-      {[...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([label, groupItems]) => <details key={`${kind}-group-${label}`} open={q ? true : undefined}>
-        <summary title={metaSelectorGroupTooltip(kind, label, groupItems, meta, showSexual, metaLanguage)}>{labels[label] ?? label} <span>{groupItems.reduce((sum, item) => sum + (treeCounts.get(item.id) ?? 1), 0)}</span></summary>
+    <SelectedMetaSummary selected={selected} meta={meta} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} toggle={toggle} />
+    <div ref={selectorRef} className="metaSelector" style={{ height }} onScroll={saveScrollState}>
+      {groupEntries.map(([label, groupItems]) => <details key={`${kind}-group-${label}`} className={metaTreeGroupClass(kind, label, groupItems, meta)} open={Boolean(q) || openGroupLabels.has(label)} onToggle={(event) => {
+        const open = event.currentTarget.open;
+        setOpenGroupLabels((current) => {
+          if (open === current.has(label)) return current;
+          const next = new Set(current);
+          if (open) next.add(label);
+          else next.delete(label);
+          return next;
+        });
+      }}>
+        <summary title={metaSelectorGroupTooltip(kind, label, groupItems, meta, showSexual, metaLanguage, uiLanguage, t)}>{kind === 'tag' && treeIndex.groupRootIds.has(Number(label)) ? metaName(groupItems[0], showSexual, metaLanguage, uiLanguage) : labels[label] ?? label} <span>{kind === 'tag' && treeIndex.groupRootIds.has(Number(label)) ? (treeIndex.children.get(groupItems[0]?.id ?? 0) ?? []).filter((child) => isVisible(child) && shouldDisplayUnderParent(groupItems[0], child) && (!filteredTree.visibleIds || filteredTree.visibleIds.has(child.id))).length : groupItems.length}</span></summary>
         <div className="metaTree">
-          {sortMeta(groupItems).map((item) => <MetaTreeNode key={`${kind}-tree-${label}-${item.id}`} item={item} children={children} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} matchedIds={matchedIds} query={q} sortMeta={sortMeta} path={new Set()} />)}
+          {groupItems.map((item) => treeIndex.groupRootIds.has(Number(label))
+            ? (treeIndex.children.get(item.id) ?? [])
+              .filter((child) => isVisible(child) && shouldDisplayUnderParent(item, child) && (!filteredTree.visibleIds || filteredTree.visibleIds.has(child.id)))
+              .sort((a, b) => compareMetaTreeDisplay(a, b, filteredTree.visibleIds))
+              .map((child) => <MetaTreeNode key={`${kind}-tree-${label}-${child.id}`} item={child} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set([item.id])} />)
+            : <MetaTreeNode key={`${kind}-tree-${label}-${item.id}`} item={item} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set()} />)}
         </div>
       </details>)}
     </div>
-    <button className="resizeHandle" type="button" onPointerDown={startResize}>拖动调整列表高度</button>
+    <button className="resizeHandle" type="button" onPointerDown={startResize}>{t.resizeListHeight}</button>
+    <div className="resizeHelp">{t.resizeListHeightHelp}</div>
   </div>;
 }
 
-function MetaTreeNode({ item, children, usageCounts, selected, selectedDescendantIds, openNodeIds, setOpenNodeIds, toggle, showSexual, metaLanguage, matchedIds, query, sortMeta, path }: { item: Meta; children: Map<number, Meta[]>; usageCounts: Map<number, number>; selected: Set<number>; selectedDescendantIds: Set<number>; openNodeIds: Set<number>; setOpenNodeIds: React.Dispatch<React.SetStateAction<Set<number>>>; toggle: (id: number) => void; showSexual: boolean; metaLanguage: MetaLanguage; matchedIds: Set<number>; query: string; sortMeta: (items: Meta[]) => Meta[]; path: Set<number> }) {
-  const childItems = sortMeta((children.get(item.id) ?? []).filter((child) => !path.has(child.id)));
+function MetaTreeNode({ item, children, isVisible, shouldDisplayUnderParent, compareMetaTreeDisplay, visibleIds, usageCounts, selected, selectedDescendantIds, openNodeIds, setOpenNodeIds, toggle, showSexual, metaLanguage, uiLanguage, matchedIds, query, path }: { item: Meta; children: Map<number, Meta[]>; isVisible: (item: Meta) => boolean; shouldDisplayUnderParent: (parent: Meta, child: Meta) => boolean; compareMetaTreeDisplay: (a: Meta, b: Meta, visibleIds: Set<number> | null) => number; visibleIds: Set<number> | null; usageCounts: Map<number, number>; selected: Set<number>; selectedDescendantIds: Set<number>; openNodeIds: Set<number>; setOpenNodeIds: React.Dispatch<React.SetStateAction<Set<number>>>; toggle: (id: number) => void; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; matchedIds: Set<number>; query: string; path: Set<number> }) {
+  const childItems = (children.get(item.id) ?? [])
+    .filter((child) => child.id !== item.id && isVisible(child) && shouldDisplayUnderParent(item, child) && (!visibleIds || visibleIds.has(child.id)) && !path.has(child.id))
+    .sort((a, b) => compareMetaTreeDisplay(a, b, visibleIds));
   const highlighted = Boolean(query && matchedIds.has(item.id));
+  const canSelect = item.searchable !== false || childItems.length > 0;
   const selectedCurrent = selected.has(item.id);
   const descendantSelected = selectedDescendantIds.has(item.id);
   const childCountText = childItems.length ? ` ${childItems.length}` : '';
-  const chip = <button className={`chip ${selectedCurrent ? 'selectedMetaChip' : `${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`} ${descendantSelected ? 'descendantSelected' : ''} ${highlighted ? 'matched' : ''}`} title={metaTooltip(item, showSexual, metaLanguage)} onClick={(event) => { event.preventDefault(); toggle(item.id); }}>{selectedCurrent ? '★ ' : ''}{descendantSelected ? '◆ ' : ''}{metaName(item, showSexual, metaLanguage)}{childCountText}</button>;
+  const chip = <button className={`chip ${selectedCurrent ? 'selectedMetaChip' : `${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`} ${descendantSelected ? 'descendantSelected' : ''} ${highlighted ? 'matched' : ''}`} title={metaTooltip(item, showSexual, metaLanguage, uiLanguage)} onClick={(event) => { event.preventDefault(); if (canSelect) toggle(item.id); }}>{selectedCurrent ? '★ ' : ''}{descendantSelected ? '◆ ' : ''}{metaName(item, showSexual, metaLanguage, uiLanguage)}{childCountText}</button>;
   const usage = <span className="metaUsageCount">{(usageCounts.get(item.id) ?? 0).toLocaleString()}</span>;
   if (!childItems.length) return <div className="metaTreeLeaf"><div className="metaTreeRow"><span className="metaTreeLeft"><span className="metaExpandPlaceholder" />{chip}</span>{usage}</div></div>;
   const nextPath = new Set(path);
@@ -2091,77 +2942,114 @@ function MetaTreeNode({ item, children, usageCounts, selected, selectedDescendan
   }}>
     <summary><div className="metaTreeRow"><span className="metaTreeLeft"><span className="metaExpandArrow">▸</span>{chip}</span>{usage}</div></summary>
     {nodeOpen ? <div className="metaTreeChildren">
-      {childItems.map((child) => <MetaTreeNode key={`tree-child-${item.id}-${child.id}`} item={child} children={children} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} matchedIds={matchedIds} query={query} sortMeta={sortMeta} path={nextPath} />)}
+      {childItems.map((child) => <MetaTreeNode key={`tree-child-${item.id}-${child.id}`} item={child} children={children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={matchedIds} query={query} path={nextPath} />)}
     </div> : null}
   </details>;
 }
 
-function MixedTagCard({ result, tagMeta, traitMeta, vns, showSexual, showSpoiler, showBlockedTags, metaLanguage, vnDetail, characterDetail, minVotes, roleFilter }: { result: MixedTagResult; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; vns: Map<number, Vn>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; metaLanguage: MetaLanguage; vnDetail?: Detail; characterDetail?: Detail; minVotes?: number; roleFilter?: CharacterRoleFilter }) {
+function MixedTagCard({ result, tagMeta, traitMeta, vns, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t, vnDetail, characterDetail, minVotes, roleFilter }: { result: MixedTagResult; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; vns: Map<number, Vn>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; vnDetail?: Detail; characterDetail?: Detail; minVotes?: number; roleFilter?: CharacterRoleFilter }) {
   return <article className="mixedCard">
-    <div className="metrics"><span>组合相似 {(result.similarity * 100).toFixed(1)}%</span><span>重点置信 {result.priorityMatched}/{result.priorityTotal}（{(Math.min(result.priorityConfidence, 1) * 100).toFixed(0)}%）</span></div>
+    <div className="metrics"><span>{t.combinedSimilarity} {(result.similarity * 100).toFixed(1)}%</span><span>{t.priorityConfidence} {result.priorityMatched}/{result.priorityTotal}（{(Math.min(result.priorityConfidence, 1) * 100).toFixed(0)}%）</span></div>
     <div className="mixedColumns">
-      <VnCard vn={result.vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} detail={vnDetail} showMedia similarity={result.vn.similarity} overlap={result.vn.overlap} priorityMatched={result.vn.priorityMatched} priorityTotal={result.vn.priorityTotal} priorityConfidence={result.vn.priorityConfidence} />
-      <CharacterCard character={result.character} vns={vns} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} detail={characterDetail} showMedia similarity={result.character.similarity} overlap={result.character.overlap} priorityMatched={result.character.priorityMatched} priorityTotal={result.character.priorityTotal} priorityConfidence={result.character.priorityConfidence} minVotes={minVotes} roleFilter={roleFilter} />
+      <VnCard vn={result.vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={vnDetail} showMedia similarity={result.vn.similarity} overlap={result.vn.overlap} priorityMatched={result.vn.priorityMatched} priorityTotal={result.vn.priorityTotal} priorityConfidence={result.vn.priorityConfidence} />
+      <CharacterCard character={result.character} vns={vns} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={characterDetail} showMedia similarity={result.character.similarity} overlap={result.character.overlap} priorityMatched={result.character.priorityMatched} priorityTotal={result.character.priorityTotal} priorityConfidence={result.character.priorityConfidence} minVotes={minVotes} roleFilter={roleFilter} />
     </div>
   </article>;
 }
 
-function MetaChip({ item, meta, kind, showSexual, metaLanguage }: { item: Pair | TraitPair; meta: Map<number, Meta>; kind: 'tag' | 'trait'; showSexual: boolean; metaLanguage: MetaLanguage }) {
+function MetaChip({ item, meta, kind, showSexual, metaLanguage, uiLanguage }: { item: Pair | TraitPair; meta: Map<number, Meta>; kind: 'tag' | 'trait'; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage }) {
   const metaItem = meta.get(item[0]);
   if (!metaItem) return null;
-  const name = metaName(metaItem, showSexual, metaLanguage);
+  const name = metaName(metaItem, showSexual, metaLanguage, uiLanguage);
   const score = kind === 'tag' ? ` ${Number(item[1]).toFixed(1)}` : '';
   const spoilerValue = itemSpoiler(item, kind);
-  return <a className={`chip ${metaItem.sexual ? 'sexual' : ''} ${metaItem.tech ? 'technical' : ''} ${metaItem.blocked ? 'blocked' : ''} ${spoilerClass(spoilerValue)}`} href={vndbUrl(kind === 'tag' ? 'g' : 'i', item[0])} target="_blank" rel="noreferrer" title={metaTooltip(metaItem, showSexual, metaLanguage)}>{name}{score}</a>;
+  return <a className={`chip ${metaItem.sexual ? 'sexual' : ''} ${metaItem.tech ? 'technical' : ''} ${metaItem.blocked ? 'blocked' : ''} ${spoilerClass(spoilerValue)}`} href={vndbUrl(kind === 'tag' ? 'g' : 'i', item[0])} target="_blank" rel="noreferrer" title={metaTooltip(metaItem, showSexual, metaLanguage, uiLanguage)}>{name}{score}</a>;
 }
 
-function ProducerLinks({ producers }: { producers: Producer[] }) {
+function ProducerLinks({ producers, t }: { producers: Producer[]; t: Record<string, string> }) {
   const unique = producers.filter((producer, index, list) => list.findIndex((item) => item.id === producer.id) === index);
   if (!unique.length) return null;
-  return <div className="mini">厂商：{unique.slice(0, 5).map((producer, index) => <React.Fragment key={`producer-${producer.id}-${index}`}>{index ? ' / ' : ''}<a href={vndbUrl('p', producer.id)} target="_blank" rel="noreferrer">{producer.name}</a></React.Fragment>)}</div>;
+  return <div className="mini">{t.producers}：{unique.slice(0, 5).map((producer, index) => <React.Fragment key={`producer-${producer.id}-${index}`}>{index ? ' / ' : ''}<a href={vndbUrl('p', producer.id)} target="_blank" rel="noreferrer">{producer.name}</a></React.Fragment>)}</div>;
 }
 
-function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, showTechnicalTags = true, metaLanguage, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, relations = [] }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; showTechnicalTags?: boolean; metaLanguage: MetaLanguage; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; relations?: string[] }) {
+function VnRelationLabel({ relation, language }: { relation: VnRelationType; language: UiLanguage }) {
+  const labels: Record<UiLanguage, Record<string, string>> = {
+    zh: { seq: '续作', preq: '前作', set: '同设定', alt: '另一个版本', char: '共享角色', side: '外传', par: '本篇', ser: '同系列', fan: 'Fan disc', orig: '原作' },
+    ja: { seq: '続編', preq: '前作', set: '同じ設定', alt: '別バージョン', char: '共通キャラクター', side: '外伝', par: '本編', ser: '同シリーズ', fan: 'Fan disc', orig: '原作' },
+    en: { seq: 'Sequel', preq: 'Prequel', set: 'Same setting', alt: 'Alternative version', char: 'Shares characters', side: 'Side story', par: 'Parent story', ser: 'Same series', fan: 'Fan disc', orig: 'Original game' }
+  };
+  return labels[language][relation] ?? relation;
+}
+
+function VnRelations({ relations, vns, t, language }: { relations: VnRelation[]; vns: Map<number, Vn>; t: Record<string, string>; language: UiLanguage }) {
+  const items = relations.map(([id, relation]) => ({ id, relation, vn: vns.get(id) })).filter((item) => item.vn).slice(0, 5);
+  if (!items.length) return null;
+  return <div className="mini relationList"><div>{t.relatedVns}：</div>{items.map(({ id, relation, vn }) => <div key={`related-vn-${id}-${relation}`}><VnRelationLabel relation={relation} language={language} />：<a href={vndbUrl('v', id)} target="_blank" rel="noreferrer">{vn?.title ?? `v${id}`}</a></div>)}</div>;
+}
+
+function priorityConfidenceText(priorityMatched: number | undefined, priorityTotal: number | undefined, priorityConfidence: number | undefined, decimals: number) {
+  if (!priorityTotal) return null;
+  const confidence = Math.min(priorityConfidence ?? ((priorityMatched ?? 0) / priorityTotal), 1) * 100;
+  return `${priorityMatched ?? 0}/${priorityTotal}（${confidence.toFixed(decimals)}%）`;
+}
+
+function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, showTechnicalTags = true, metaLanguage, uiLanguage, t, vns, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, relations = [] }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; showTechnicalTags?: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t?: Record<string, string>; vns?: Map<number, Vn>; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; relations?: VnRelation[] }) {
+  const texts = t ?? UI_TEXT.zh;
+  const language = uiLanguage ?? 'zh';
   const producers = detail?.developers?.length ? detail.developers : [...vn.developers, ...vn.publishers];
+  const description = showDescription && detail?.description ? cleanDescription(detail.description) : '';
+  const descriptionClassName = description.length < 320 ? 'cardDescriptionScroll shortDescription' : 'cardDescriptionScroll';
+  const priorityConfidenceLabel = priorityConfidenceText(priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals);
   return (
     <article className={`card ${showMedia ? '' : 'noMedia'}`}>
       {showMedia ? detail?.imageUrl ? <img src={detail.imageUrl} loading="lazy" /> : <div className="placeholder">VN</div> : null}
       <div className="cardBody">
         <div className="cardHead">
           <div><h3><a href={vndbUrl('v', vn.id)} target="_blank" rel="noreferrer">{vn.title}</a></h3>{vn.original && vn.original !== vn.title ? <p>{vn.original}</p> : null}</div>
-          {onAdd ? <button onClick={onAdd}>加入样本</button> : null}
-          {onRemove ? <button className="danger" onClick={onRemove}>移除</button> : null}
+          {onAdd ? <button onClick={onAdd}>{texts.addSample}</button> : null}
+          {onRemove ? <button className="danger" onClick={onRemove}>{texts.remove}</button> : null}
         </div>
-        <div className="metrics"><span>v{vn.id}</span><span>rating {vn.rating.toFixed(1)}</span><span>{vn.votes} votes</span>{detail?.loading ? <span>详情加载中</span> : null}{detail?.error ? <span>详情失败</span> : null}{similarity !== undefined ? <span>相似 {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>重合 {overlap}</span> : null}{priorityTotal ? <span>重点置信 {priorityMatched}/{priorityTotal}（{(Math.min(priorityConfidence ?? ((priorityMatched ?? 0) / priorityTotal), 1) * 100).toFixed(0)}%）</span> : null}</div>
-        <ProducerLinks producers={producers} />
-        {showDescription && detail?.description ? <p className="description">{cleanDescription(detail.description)}</p> : null}
-        <div className="chips">{visibleItems(vn.tags, meta, 'tag', showSexual, showSpoiler, showBlockedTags, showTechnicalTags).map((tag, index) => <MetaChip key={`vn-tag-${vn.id}-${tag[0]}-${index}`} item={tag} meta={meta} kind="tag" showSexual={showSexual} metaLanguage={metaLanguage} />)}</div>
-        {relations.length ? <div className="relations">相关：{relations.slice(0, 5).join(' / ')}</div> : null}
+        <div className="metrics"><span>v{vn.id}</span><span>{texts.rating} {vn.rating.toFixed(1)}</span><span>{vn.votes} {texts.votes}</span>{detail?.loading ? <span>{texts.detailsLoading}</span> : null}{detail?.error ? <span>{texts.detailsFailed}</span> : null}{similarity !== undefined ? <span>{texts.similarity} {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>{texts.overlap} {overlap}</span> : null}{priorityConfidenceLabel ? <span>{texts.priorityConfidence} {priorityConfidenceLabel}</span> : null}</div>
+        <ProducerLinks producers={producers} t={texts} />
+        {t && uiLanguage && vns ? <VnRelations relations={relations} vns={vns} t={t} language={uiLanguage} /> : null}
+        {description ? <div className={descriptionClassName}>
+          <p className="description">{description}</p>
+        </div> : null}
+        <div className="cardMetaScroll">
+          <div className="chips cardChips">{visibleItems(vn.tags, meta, 'tag', showSexual, showSpoiler, showBlockedTags, showTechnicalTags).map((tag, index) => <MetaChip key={`vn-tag-${vn.id}-${tag[0]}-${index}`} item={tag} meta={meta} kind="tag" showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={language} />)}</div>
+        </div>
       </div>
     </article>
   );
 }
 
-function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLanguage, preferAverage = false, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, minVotes, roleFilter }: { character: Character; vns: Map<number, Vn>; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; metaLanguage: MetaLanguage; preferAverage?: boolean; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; minVotes?: number; roleFilter?: CharacterRoleFilter }) {
+function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLanguage, uiLanguage = 'zh', t, preferAverage = false, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, minVotes, roleFilter }: { character: Character; vns: Map<number, Vn>; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t: Record<string, string>; preferAverage?: boolean; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; minVotes?: number; roleFilter?: CharacterRoleFilter }) {
   const displayedVns = character.vns.filter(([id, role]) => (minVotes === undefined || (vns.get(id)?.votes ?? 0) >= minVotes) && (!roleFilter || roleAllowed(role, roleFilter)));
   const displayedScores = displayedVns.map(([id]) => vns.get(id)?.average ?? 0).filter((score) => score > 0);
   const averageScore = displayedScores.length ? displayedScores.reduce((sum, score) => sum + score, 0) / displayedScores.length : characterAverageScore(character, vns);
+  const description = showDescription && detail?.description ? cleanDescription(detail.description) : '';
+  const descriptionClassName = description.length < 320 ? 'cardDescriptionScroll shortDescription' : 'cardDescriptionScroll';
+  const priorityConfidenceLabel = priorityConfidenceText(priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals);
   return (
     <article className={`card ${showMedia ? '' : 'noMedia'}`}>
       {showMedia ? detail?.imageUrl ? <img src={detail.imageUrl} loading="lazy" /> : <div className="placeholder">CH</div> : null}
       <div className="cardBody">
         <div className="cardHead">
           <div><h3><a href={vndbUrl('c', character.id)} target="_blank" rel="noreferrer">{character.name}</a></h3>{character.original && character.original !== character.name ? <p>{character.original}</p> : null}</div>
-          {onAdd ? <button onClick={onAdd}>加入样本</button> : null}
-          {onRemove ? <button className="danger" onClick={onRemove}>移除</button> : null}
+          {onAdd ? <button onClick={onAdd}>{t.addSample}</button> : null}
+          {onRemove ? <button className="danger" onClick={onRemove}>{t.remove}</button> : null}
         </div>
-        <div className="metrics"><span>c{character.id}</span><span>关联分 {character.score.toFixed(1)}</span>{averageScore ? <span>VN均分 {averageScore.toFixed(1)}</span> : null}{preferAverage ? <span>均分加权</span> : null}{detail?.loading ? <span>详情加载中</span> : null}{detail?.error ? <span>详情失败</span> : null}{similarity !== undefined ? <span>相似 {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>重合 {overlap}</span> : null}{priorityTotal ? <span>重点置信 {priorityMatched}/{priorityTotal}（{(Math.min(priorityConfidence ?? ((priorityMatched ?? 0) / priorityTotal), 1) * 100).toFixed(0)}%）</span> : null}</div>
-        {showDescription && detail?.description ? <p className="description">{cleanDescription(detail.description)}</p> : null}
-        <div className="mini">VN：{displayedVns.slice(0, 4).map(([id, role], index) => <React.Fragment key={`character-vn-${character.id}-${id}-${index}`}>{index ? ' / ' : ''}<a href={vndbUrl('v', id)} target="_blank" rel="noreferrer">{vns.get(id)?.title ?? `v${id}`}</a>({role})</React.Fragment>)}</div>
-        <div className="traitGroupList">{traitGroups(character.traits, meta, showSexual, showSpoiler).map(([label, items]) => <div className="traitGroup" key={`character-group-${character.id}-${label}`}>
-          <div className="traitGroupLabel">{label}</div>
-          <div className="chips">{items.map((trait, index) => <MetaChip key={`character-trait-${character.id}-${trait[0]}-${index}`} item={trait} meta={meta} kind="trait" showSexual={showSexual} metaLanguage={metaLanguage} />)}</div>
-        </div>)}</div>
+        <div className="metrics"><span>c{character.id}</span><span>{t.associationScore} {character.score.toFixed(1)}</span>{averageScore ? <span>{t.vnAverage} {averageScore.toFixed(1)}</span> : null}{preferAverage ? <span>{t.averageWeighted}</span> : null}{detail?.loading ? <span>{t.detailsLoading}</span> : null}{detail?.error ? <span>{t.detailsFailed}</span> : null}{similarity !== undefined ? <span>{t.similarity} {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>{t.overlap} {overlap}</span> : null}{priorityConfidenceLabel ? <span>{t.priorityConfidence} {priorityConfidenceLabel}</span> : null}</div>
+        <div className="mini characterAppearances"><div>{t.characterAppearances}：</div>{displayedVns.slice(0, 4).map(([id, role], index) => <div key={`character-vn-${character.id}-${id}-${index}`}><a href={vndbUrl('v', id)} target="_blank" rel="noreferrer">{vns.get(id)?.title ?? `v${id}`}</a>（{characterRoleText(role, t)}）</div>)}</div>
+        {description ? <div className={descriptionClassName}>
+          <p className="description">{description}</p>
+        </div> : null}
+        <div className="cardMetaScroll">
+          <div className="traitGroupList cardTraitGroups">{traitGroups(character.traits, meta, showSexual, showSpoiler, metaLanguage, uiLanguage).map(([label, items]) => <div className="traitGroup" key={`character-group-${character.id}-${label}`}>
+            <div className="traitGroupLabel">{label}</div>
+            <div className="chips">{items.map((trait, index) => <MetaChip key={`character-trait-${character.id}-${trait[0]}-${index}`} item={trait} meta={meta} kind="trait" showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} />)}</div>
+          </div>)}</div>
+        </div>
       </div>
     </article>
   );
@@ -2171,4 +3059,10 @@ const container = document.getElementById('root')!;
 const globalWithRoot = globalThis as typeof globalThis & { __vndbPrototypeRoot?: Root };
 const root = globalWithRoot.__vndbPrototypeRoot ?? createRoot(container);
 globalWithRoot.__vndbPrototypeRoot = root;
-root.render(<App />);
+const renderGlobalError = (reason: unknown) => {
+  const error: LoadError = { message: reason instanceof Error ? reason.message : String(reason), stack: reason instanceof Error ? reason.stack : undefined, stage: 'errorRuntime', progress: 100, detail: null };
+  root.render(<LoadingErrorView error={error} />);
+};
+window.addEventListener('error', (event) => renderGlobalError(event.error ?? event.message));
+window.addEventListener('unhandledrejection', (event) => renderGlobalError(event.reason));
+root.render(<AppErrorBoundary><App /></AppErrorBoundary>);
