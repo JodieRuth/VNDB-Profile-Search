@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-04-29T05:54:43.681Z",
-  "buildDateUtc8": "2026-04-29 13:54:43",
-  "dataPath": "./data/vndb-prototype.885d6d1d1130c3bd.json.gz",
-  "sha256": "885d6d1d1130c3bdeddb550890a64c7ac309a7e4f8a91b2afdcbbe85d93f277f",
+  "generatedAt": "2026-04-29T06:46:26.582Z",
+  "buildDateUtc8": "2026-04-29 14:46:26",
+  "dataPath": "./data/vndb-prototype.b6b527f2ab006082.json.gz",
+  "sha256": "b6b527f2ab006082a26378fc016c7bbab2f383c647893c42b1e6cfcb6bf1d615",
   "size": 35295276,
   "stats": {
     "vns": 62021,
