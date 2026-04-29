@@ -37,6 +37,9 @@ jobs:
           curl -L --retry 5 --retry-delay 20 --fail https://dl.vndb.org/dump/vndb-db-latest.tar.zst -o .tmp-vndb-dump/vndb-db-latest.tar.zst
           tar -xf .tmp-vndb-dump/vndb-db-latest.tar.zst -C .tmp-vndb-dump/extract
 
+      - name: Remove old generated compressed data
+        run: git rm -f --ignore-unmatch public/data/vndb-prototype*.json.gz public/data/manifest.json
+
       - name: Generate local data
         run: npm run generate:data
 
@@ -55,4 +58,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: update VNDB generated data"
-          file_pattern: public/data/vndb-prototype.json.gz public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
+          file_pattern: public/data/vndb-prototype*.json.gz public/data/manifest.json public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json

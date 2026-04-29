@@ -1,5 +1,6 @@
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,11 @@ const stripPrefix = (id) => Number(String(id).replace(/^[a-z]+/, ''));
 const b64 = (value) => Buffer.from(value ?? '', 'utf8').toString('base64');
 const fromB64 = (value) => Buffer.from(value ?? '', 'base64').toString('utf8');
 const encodedText = (value) => b64(value ?? '');
+const formatUtc8Date = (date) => {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(date);
+  const value = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}:${value.second}`;
+};
 const decodedTranslationValue = (entry, key) => {
   const value = entry?.[key];
   if (!value) return '';
@@ -594,8 +600,12 @@ function stringifyPayload(payload) {
 }
 
 mkdirSync(outRoot, { recursive: true });
+const generatedDate = new Date();
+const generatedAt = generatedDate.toISOString();
+const buildDateUtc8 = formatUtc8Date(generatedDate);
 const payload = {
-  generatedAt: new Date().toISOString(),
+  generatedAt,
+  buildDateUtc8,
   source: 'VNDB near-complete database dump, complete local export',
   limits: {},
   stats: { vns: vns.length, characters: characters.length, tags: tagMeta.size, traits: traitMeta.size, blockedTags: blockedTagIds.size, producers: producerMap.size },
@@ -605,10 +615,24 @@ const payload = {
   traits: [...traitMeta.values()]
 };
 const jsonPayload = stringifyPayload(payload);
+const gzipPayload = gzipSync(jsonPayload, { level: 9 });
+const gzipHash = createHash('sha256').update(gzipPayload).digest('hex');
+const gzipFileName = `vndb-prototype.${gzipHash.slice(0, 16)}.json.gz`;
 const dataPath = join(outRoot, 'vndb-prototype.json');
-const gzipPath = join(outRoot, 'vndb-prototype.json.gz');
+const hashedGzipPath = join(outRoot, gzipFileName);
+const manifestPath = join(outRoot, 'manifest.json');
+const manifest = {
+  generatedAt: payload.generatedAt,
+  buildDateUtc8: payload.buildDateUtc8,
+  dataPath: `./data/${gzipFileName}`,
+  sha256: gzipHash,
+  size: gzipPayload.length,
+  stats: payload.stats
+};
 writeFileSync(dataPath, jsonPayload);
-writeFileSync(gzipPath, gzipSync(jsonPayload, { level: 9 }));
+writeFileSync(hashedGzipPath, gzipPayload);
+writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 console.log(payload.stats);
 console.log(`写入 ${dataPath}`);
-console.log(`写入 ${gzipPath}`);
+console.log(`写入 ${hashedGzipPath}`);
+console.log(`写入 ${manifestPath}`);

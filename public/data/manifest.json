@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-04-29T04:59:57.815Z",
+  "buildDateUtc8": "2026-04-29 12:59:57",
+  "dataPath": "./data/vndb-prototype.0569eb9fa8197983.json.gz",
+  "sha256": "0569eb9fa8197983d56cc24d08cbf80bde210b978d74dc4a288200fb6dbd7d81",
+  "size": 35294441,
+  "stats": {
+    "vns": 62021,
+    "characters": 162784,
+    "tags": 2982,
+    "traits": 3321,
+    "blockedTags": 1332,
+    "producers": 28018
+  }
+}

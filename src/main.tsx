@@ -76,6 +76,7 @@ type Meta = {
 };
 type Data = {
   generatedAt: string;
+  buildDateUtc8?: string;
   source: string;
   limits: Record<string, number>;
   stats: Record<string, number>;
@@ -109,21 +110,52 @@ type RecommendationRef = { id: number; similarity: number; overlap: number; prio
 type MixedTagRef = { vnId: number; characterId: number; similarity: number; priorityMatched: number; priorityTotal: number; priorityConfidence: number };
 type WorkerResult = { vnRecommendations: RecommendationRef[]; characterRecommendations: RecommendationRef[]; tagSearchVnResults: RecommendationRef[]; tagSearchCharacterResults: RecommendationRef[]; mixedTagResults: MixedTagRef[] };
 type MetaSearchGroup = { selectedId: number; alternatives: Set<number> };
+type DataManifest = { dataPath?: string; path?: string; sha256?: string; generatedAt?: string; buildDateUtc8?: string; size?: number };
+type PersistedState = {
+  version: number;
+  mode: Mode;
+  query: string;
+  submittedQuery: string;
+  selectedVnIds: number[];
+  selectedCharacterIds: number[];
+  showSexual: boolean;
+  showSpoiler: boolean;
+  showBlockedTags: boolean;
+  showTechnicalTags: boolean;
+  metaLanguage: MetaLanguage;
+  uiLanguage: UiLanguage;
+  minVotes: number;
+  tagLimit: number;
+  traitLimit: number;
+  preferCharacterAverage: boolean;
+  tagRoleFilter: CharacterRoleFilter;
+  resultSort: ResultSort;
+  sortDirection: SortDirection;
+  darkMode: boolean;
+  resultPage: number;
+  localSearchPage: number;
+  priorityTagIds: number[];
+  priorityTraitIds: number[];
+  tagSearchTagIds: number[];
+  tagSearchTraitIds: number[];
+};
 
 const REPOSITORY_URL = 'https://github.com/JodieRuth/VNDB-Profile-Search';
 const README_URL = `${REPOSITORY_URL}#readme`;
 const GITHUB_REPO_API = 'https://api.github.com/repos/JodieRuth/VNDB-Profile-Search';
-const DATA_GZIP_PATH = './data/vndb-prototype.json.gz';
+const DATA_MANIFEST_PATH = './data/manifest.json';
+const STORAGE_KEY = 'vndb-profile-search-state-v1';
+const PERSISTED_STATE_VERSION = 1;
 
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
   zh: {
-    source: '基于 VNDB 数据源', themeDark: '切换黑夜模式', themeLight: '切换白天模式', vnMode: 'VN 检索', characterMode: '角色检索', tagMode: '标签检索', showR18: '显示 R18 标签名', allowSpoiler: '允许剧透标签', metaLanguage: 'tag/traits', uiLanguage: '界面', searchVn: '搜索 VN', searchCharacter: '搜索角色', searchLocal: '搜索本地索引', localResults: '本地搜索结果', selectedSamples: '已选择样本', profile: '合成画像', vnRecommendations: '相似 VN 推荐', characterRecommendations: '相似角色推荐', tagResults: 'tag/traits 检索结果', candidates: '候选数量', perPage: '每页', currentPage: '当前第', page: '页', sort: '排序', direction: '方向', minVotes: '最低票数', tagLimit: '搜索前 N 个 tag', traitLimit: '搜索前 N 个 trait', preferAverage: '按关联 VN 平均分加权', roleType: '角色类型', primary: '主角', main: '主要角色', side: '配角', appears: '仅登场', previous: '上一页', next: '下一页', previousItem: '上一个', nextItem: '下一个', loadPage: '载入当前页详情', choosePage: '请选择排序与分页后载入当前页详情。', license: 'VNDB 数据遵循 VNDB Data License（Open Database License / Database Contents License）；图片与外部详情仍以 VNDB 原站记录为准。', relevance: '相关值', confidence: '置信度', rating: 'VN rating', votes: '投票数', title: '标题', desc: '上到下', asc: '下到上', clear: '清空', tagPanelTitle: 'VN tag', traitPanelTitle: '角色 traits', tagPanelDesc: '选择作品 tag；技术 tag 和 Character/Scene tag 只有被选中时才参与检索。', traitPanelDesc: '选择角色 trait；与 VN tag 同时选择时输出作品 + 角色组合。', tagFilter: '检索 VN tag', traitFilter: '检索角色 trait', showBlockedTags: '显示 Character/Scene 标签', loading: '正在加载本地 VNDB 索引……', computing: '正在计算候选结果……', selectedMeta: '已选中', parentMeta: '父级', projectLinks: '项目链接', readmeTitle: '使用说明', githubStarFallback: 'Star', githubStarHelp: '如果这个项目对你有帮助，请考虑点个 star', statsVn: 'VN', statsCharacters: '角色', statsMeta: '标签数量', statsProducers: '厂商', metaLanguageLabel: 'tag/trait 显示语言', uiLanguageLabel: '界面语言'
+    source: '基于 VNDB 数据源', themeDark: '切换黑夜模式', themeLight: '切换白天模式', vnMode: 'VN 检索', characterMode: '角色检索', tagMode: '标签检索', showR18: '显示 R18 标签名', allowSpoiler: '允许剧透标签', metaLanguage: 'tag/traits', uiLanguage: '语言', searchVn: '搜索 VN', searchCharacter: '搜索角色', searchLocal: '搜索本地索引', localResults: '本地搜索结果', selectedSamples: '已选择样本', profile: '合成画像', vnRecommendations: '相似 VN 推荐', characterRecommendations: '相似角色推荐', tagResults: 'tag/traits 检索结果', candidates: '候选数量', perPage: '每页', currentPage: '当前第', page: '页', sort: '排序', direction: '方向', minVotes: '最低票数', tagLimit: '搜索前 N 个 tag', traitLimit: '搜索前 N 个 trait', preferAverage: '按关联 VN 平均分加权', roleType: '角色类型', primary: '主角', main: '主要角色', side: '配角', appears: '仅登场', previous: '上一页', next: '下一页', previousItem: '上一个', nextItem: '下一个', loadPage: '载入当前页详情', choosePage: '请选择排序与分页后载入当前页详情。', license: 'VNDB 数据遵循 VNDB Data License（Open Database License / Database Contents License）；图片与外部详情仍以 VNDB 原站记录为准。', relevance: '相关值', confidence: '置信度', rating: 'VN rating', votes: '投票数', title: '标题', desc: '上到下', asc: '下到上', clear: '清空', tagPanelTitle: 'VN tag', traitPanelTitle: '角色 traits', tagPanelDesc: '选择作品 tag；技术 tag 和 Character/Scene tag 只有被选中时才参与检索。', traitPanelDesc: '选择角色 trait；与 VN tag 同时选择时输出作品 + 角色组合。', tagFilter: '检索 VN tag', traitFilter: '检索角色 trait', showBlockedTags: '显示 Character/Scene 标签', showTechnicalTags: '显示技术性标签', loading: '正在加载本地 VNDB 索引……', computing: '正在计算候选结果……', selectedMeta: '已选中', parentMeta: '父级', projectLinks: '项目链接', readmeTitle: '使用说明', githubStarFallback: 'Star', githubStarHelp: '如果这个项目对你有帮助，请考虑点个 star', statsVn: 'VN', statsCharacters: '角色', statsMeta: '标签数量', statsProducers: '厂商', metaLanguageLabel: 'tag/trait 显示语言', uiLanguageLabel: '语言设置', dataLastUpdated: '数据最后更新时间'
   },
   ja: {
-    source: 'VNDB データソースに基づく', themeDark: 'ダークモードへ', themeLight: 'ライトモードへ', vnMode: 'VN検索', characterMode: 'キャラクター検索', tagMode: 'タグ検索', showR18: 'R18 タグ名', allowSpoiler: 'ネタバレ許可', metaLanguage: 'tag/traits', uiLanguage: 'UI', searchVn: 'VN を検索', searchCharacter: 'キャラクターを検索', searchLocal: 'ローカル検索', localResults: 'ローカル検索結果', selectedSamples: '選択したサンプル', profile: '合成プロファイル', vnRecommendations: '類似 VN 推薦', characterRecommendations: '類似キャラクター推薦', tagResults: 'tag/traits 検索結果', candidates: '候補数', perPage: '1ページ', currentPage: '現在', page: 'ページ', sort: 'ソート', direction: '方向', minVotes: '最低投票数', tagLimit: '検索 tag 数', traitLimit: '検索 trait 数', preferAverage: '関連 VN 平均点で重み付け', roleType: '役割', primary: '主人公', main: 'メイン', side: 'サブ', appears: '登場のみ', previous: '前へ', next: '次へ', previousItem: '前の項目', nextItem: '次の項目', loadPage: '現在ページの詳細を読み込む', choosePage: 'ソートとページを選択してから詳細を読み込んでください。', license: 'VNDB データは VNDB Data License（Open Database License / Database Contents License）に従います。画像と外部詳細は VNDB 原本を基準とします。', relevance: '関連度', confidence: '信頼度', rating: 'VN rating', votes: '投票数', title: 'タイトル', desc: '降順', asc: '昇順', clear: 'クリア', tagPanelTitle: 'VN tag', traitPanelTitle: 'キャラクター traits', tagPanelDesc: '作品 tag を選択します。technical tag と Character/Scene tag は選択時のみ検索に使われます。', traitPanelDesc: 'キャラクター trait を選択します。VN tag と同時に選ぶと VN + キャラクターの組み合わせを出力します。', tagFilter: 'VN tag を検索', traitFilter: 'キャラクター trait を検索', showBlockedTags: 'Character/Scene tag', loading: 'ローカル VNDB 索引を読み込み中……', computing: '候補を計算中……', selectedMeta: '選択中', parentMeta: '親', projectLinks: 'プロジェクトリンク', readmeTitle: '使い方', githubStarFallback: 'Star', githubStarHelp: 'このプロジェクトが役に立った場合は star をご検討ください', statsVn: 'VN', statsCharacters: 'キャラクター', statsMeta: 'タグ数', statsProducers: '制作者', metaLanguageLabel: 'tag/trait 表示言語', uiLanguageLabel: 'UI 言語'
+    source: 'VNDB データソースに基づく', themeDark: 'ダークモードへ', themeLight: 'ライトモードへ', vnMode: 'VN検索', characterMode: 'キャラクター検索', tagMode: 'タグ検索', showR18: 'R18 タグ名', allowSpoiler: 'ネタバレ許可', metaLanguage: 'tag/traits', uiLanguage: '言語', searchVn: 'VN を検索', searchCharacter: 'キャラクターを検索', searchLocal: 'ローカル検索', localResults: 'ローカル検索結果', selectedSamples: '選択したサンプル', profile: '合成プロファイル', vnRecommendations: '類似 VN 推薦', characterRecommendations: '類似キャラクター推薦', tagResults: 'tag/traits 検索結果', candidates: '候補数', perPage: '1ページ', currentPage: '現在', page: 'ページ', sort: 'ソート', direction: '方向', minVotes: '最低投票数', tagLimit: '検索 tag 数', traitLimit: '検索 trait 数', preferAverage: '関連 VN 平均点で重み付け', roleType: '役割', primary: '主人公', main: 'メイン', side: 'サブ', appears: '登場のみ', previous: '前へ', next: '次へ', previousItem: '前の項目', nextItem: '次の項目', loadPage: '現在ページの詳細を読み込む', choosePage: 'ソートとページを選択してから詳細を読み込んでください。', license: 'VNDB データは VNDB Data License（Open Database License / Database Contents License）に従います。画像と外部詳細は VNDB 原本を基準とします。', relevance: '関連度', confidence: '信頼度', rating: 'VN rating', votes: '投票数', title: 'タイトル', desc: '降順', asc: '昇順', clear: 'クリア', tagPanelTitle: 'VN tag', traitPanelTitle: 'キャラクター traits', tagPanelDesc: '作品 tag を選択します。technical tag と Character/Scene tag は選択時のみ検索に使われます。', traitPanelDesc: 'キャラクター trait を選択します。VN tag と同時に選ぶと VN + キャラクターの組み合わせを出力します。', tagFilter: 'VN tag を検索', traitFilter: 'キャラクター trait を検索', showBlockedTags: 'Character/Scene tag', showTechnicalTags: 'technical tag', loading: 'ローカル VNDB 索引を読み込み中……', computing: '候補を計算中……', selectedMeta: '選択中', parentMeta: '親', projectLinks: 'プロジェクトリンク', readmeTitle: '使い方', githubStarFallback: 'Star', githubStarHelp: 'このプロジェクトが役に立った場合は star をご検討ください', statsVn: 'VN', statsCharacters: 'キャラクター', statsMeta: 'タグ数', statsProducers: '制作者', metaLanguageLabel: 'tag/trait 表示言語', uiLanguageLabel: '言語設定', dataLastUpdated: 'データ最終更新時刻'
   },
   en: {
-    source: 'Based on VNDB data source', themeDark: 'Switch to dark mode', themeLight: 'Switch to light mode', vnMode: 'VN search', characterMode: 'Character search', tagMode: 'Tag search', showR18: 'R18 names', allowSpoiler: 'Spoilers', metaLanguage: 'tag/traits', uiLanguage: 'UI', searchVn: 'Search VN', searchCharacter: 'Search character', searchLocal: 'Search local index', localResults: 'Local search results', selectedSamples: 'Selected samples', profile: 'Combined profile', vnRecommendations: 'Similar VN recommendations', characterRecommendations: 'Similar character recommendations', tagResults: 'tag/traits results', candidates: 'Candidates', perPage: 'Per page', currentPage: 'Page', page: '', sort: 'Sort', direction: 'Direction', minVotes: 'Minimum votes', tagLimit: 'Top N tags', traitLimit: 'Top N traits', preferAverage: 'Weight by related VN average', roleType: 'Character role', primary: 'Primary', main: 'Main', side: 'Side', appears: 'Appears only', previous: 'Previous', next: 'Next', previousItem: 'Previous item', nextItem: 'Next item', loadPage: 'Load current page details', choosePage: 'Choose sorting and page, then load current page details.', license: 'VNDB data follows the VNDB Data License (Open Database License / Database Contents License); images and external details remain subject to VNDB records.', relevance: 'Relevance', confidence: 'Confidence', rating: 'VN rating', votes: 'Votes', title: 'Title', desc: 'Descending', asc: 'Ascending', clear: 'Clear', tagPanelTitle: 'VN tag', traitPanelTitle: 'Character traits', tagPanelDesc: 'Select VN tags. Technical and Character/Scene tags only participate when selected.', traitPanelDesc: 'Select character traits. Selecting both VN tags and traits outputs VN + character pairs.', tagFilter: 'Search VN tag', traitFilter: 'Search character trait', showBlockedTags: 'Character/Scene tag', loading: 'Loading local VNDB index……', computing: 'Computing candidates……', selectedMeta: 'Selected', parentMeta: 'Parent', projectLinks: 'Project links', readmeTitle: 'Usage guide', githubStarFallback: 'Star', githubStarHelp: 'If this project helps you, please consider giving it a star', statsVn: 'VN', statsCharacters: 'Characters', statsMeta: 'Tags', statsProducers: 'Producers', metaLanguageLabel: 'tag/trait display language', uiLanguageLabel: 'UI language'
+    source: 'Based on VNDB data source', themeDark: 'Switch to dark mode', themeLight: 'Switch to light mode', vnMode: 'VN search', characterMode: 'Character search', tagMode: 'Tag search', showR18: 'R18 names', allowSpoiler: 'Spoilers', metaLanguage: 'tag/traits', uiLanguage: 'Language', searchVn: 'Search VN', searchCharacter: 'Search character', searchLocal: 'Search local index', localResults: 'Local search results', selectedSamples: 'Selected samples', profile: 'Combined profile', vnRecommendations: 'Similar VN recommendations', characterRecommendations: 'Similar character recommendations', tagResults: 'tag/traits results', candidates: 'Candidates', perPage: 'Per page', currentPage: 'Page', page: '', sort: 'Sort', direction: 'Direction', minVotes: 'Minimum votes', tagLimit: 'Top N tags', traitLimit: 'Top N traits', preferAverage: 'Weight by related VN average', roleType: 'Character role', primary: 'Primary', main: 'Main', side: 'Side', appears: 'Appears only', previous: 'Previous', next: 'Next', previousItem: 'Previous item', nextItem: 'Next item', loadPage: 'Load current page details', choosePage: 'Choose sorting and page, then load current page details.', license: 'VNDB data follows the VNDB Data License (Open Database License / Database Contents License); images and external details remain subject to VNDB records.', relevance: 'Relevance', confidence: 'Confidence', rating: 'VN rating', votes: 'Votes', title: 'Title', desc: 'Descending', asc: 'Ascending', clear: 'Clear', tagPanelTitle: 'VN tag', traitPanelTitle: 'Character traits', tagPanelDesc: 'Select VN tags. Technical and Character/Scene tags only participate when selected.', traitPanelDesc: 'Select character traits. Selecting both VN tags and traits outputs VN + character pairs.', tagFilter: 'Search VN tag', traitFilter: 'Search character trait', showBlockedTags: 'Character/Scene tag', showTechnicalTags: 'technical tags', loading: 'Loading local VNDB index……', computing: 'Computing candidates……', selectedMeta: 'Selected', parentMeta: 'Parent', projectLinks: 'Project links', readmeTitle: 'Usage guide', githubStarFallback: 'Star', githubStarHelp: 'If this project helps you, please consider giving it a star', statsVn: 'VN', statsCharacters: 'Characters', statsMeta: 'Tags', statsProducers: 'Producers', metaLanguageLabel: 'tag/trait display language', uiLanguageLabel: 'Language settings', dataLastUpdated: 'Data last updated'
   }
 };
 
@@ -133,6 +165,78 @@ const isCharId = (value: string) => /^c\d+$/i.test(value.trim());
 const idOf = (value: string) => Number(value.trim().slice(1));
 const vndbUrl = (prefix: 'v' | 'c' | 'g' | 'i' | 'p', id: number) => `https://vndb.org/${prefix}${id}`;
 const normalizeTitle = (value: string) => value.toLocaleLowerCase().replace(/[\s\-_~:：!！?？()[\]（）【】「」『』,，.。]/g, '');
+const numberArray = (value: unknown) => Array.isArray(value) ? value.filter((item): item is number => Number.isInteger(item) && item >= 0) : [];
+const numberValue = (value: unknown, fallback: number, min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+const booleanValue = (value: unknown, fallback: boolean) => typeof value === 'boolean' ? value : fallback;
+const formatUtc8Date = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(date);
+  const fields = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}:${fields.second}`;
+};
+const oneOf = <T extends string>(value: unknown, values: readonly T[], fallback: T) => typeof value === 'string' && (values as readonly string[]).includes(value) ? value as T : fallback;
+const defaultRoleFilter = (): CharacterRoleFilter => ({ primary: true, main: true, side: true, appears: true });
+
+function loadPersistedState() {
+  try {
+    const textValue = window.localStorage.getItem(STORAGE_KEY);
+    if (!textValue) return null;
+    const value = JSON.parse(textValue) as Partial<PersistedState>;
+    if (value.version !== PERSISTED_STATE_VERSION) return null;
+    const roleFilter = typeof value.tagRoleFilter === 'object' && value.tagRoleFilter ? value.tagRoleFilter as Partial<CharacterRoleFilter> : {};
+    return {
+      version: PERSISTED_STATE_VERSION,
+      mode: oneOf(value.mode, ['vn', 'character', 'tag'] as const, 'vn'),
+      query: typeof value.query === 'string' ? value.query : '',
+      submittedQuery: typeof value.submittedQuery === 'string' ? value.submittedQuery : '',
+      selectedVnIds: numberArray(value.selectedVnIds),
+      selectedCharacterIds: numberArray(value.selectedCharacterIds),
+      showSexual: booleanValue(value.showSexual, false),
+      showSpoiler: booleanValue(value.showSpoiler, false),
+      showBlockedTags: booleanValue(value.showBlockedTags, false),
+      showTechnicalTags: booleanValue(value.showTechnicalTags, false),
+      metaLanguage: oneOf(value.metaLanguage, ['zh', 'ja', 'origin'] as const, 'zh'),
+      uiLanguage: oneOf(value.uiLanguage, ['zh', 'ja', 'en'] as const, 'zh'),
+      minVotes: numberValue(value.minVotes, 50, 0),
+      tagLimit: numberValue(value.tagLimit, 12, 1, 60),
+      traitLimit: numberValue(value.traitLimit, 16, 1, 80),
+      preferCharacterAverage: booleanValue(value.preferCharacterAverage, false),
+      tagRoleFilter: {
+        primary: booleanValue(roleFilter.primary, true),
+        main: booleanValue(roleFilter.main, true),
+        side: booleanValue(roleFilter.side, true),
+        appears: booleanValue(roleFilter.appears, true)
+      },
+      resultSort: oneOf(value.resultSort, ['relevance', 'rating', 'votes', 'title', 'confidence'] as const, 'relevance'),
+      sortDirection: oneOf(value.sortDirection, ['desc', 'asc'] as const, 'desc'),
+      darkMode: booleanValue(value.darkMode, false),
+      resultPage: numberValue(value.resultPage, 1, 1),
+      localSearchPage: numberValue(value.localSearchPage, 1, 1),
+      priorityTagIds: numberArray(value.priorityTagIds),
+      priorityTraitIds: numberArray(value.priorityTraitIds),
+      tagSearchTagIds: numberArray(value.tagSearchTagIds),
+      tagSearchTraitIds: numberArray(value.tagSearchTraitIds)
+    } satisfies PersistedState;
+  } catch {
+    return null;
+  }
+}
+
+function resolveDataPath(manifest: DataManifest) {
+  const path = manifest.dataPath ?? manifest.path;
+  if (!path) throw new Error('Data manifest does not include a data path');
+  if (/^https?:\/\//i.test(path) || path.startsWith('./') || path.startsWith('../')) return path;
+  return `./data/${path.replace(/^\/+/, '')}`;
+}
+
+async function loadDataSource(signal: AbortSignal, onProgress: (progress: number) => void) {
+  const response = await fetch(DATA_MANIFEST_PATH, { cache: 'no-cache', signal });
+  if (!response.ok) throw new Error(String(response.status));
+  const manifest = await response.json() as DataManifest;
+  return loadDataText(resolveDataPath(manifest), true, signal, onProgress);
+}
+
 const decode = (value: string) => {
   try {
     return decodeURIComponent(escape(atob(value)));
@@ -523,7 +627,7 @@ function groupedMetaScore(groups: MetaSearchGroup[], candidate: Map<number, numb
   return matched / groups.length * 0.82 + strength / groups.length * 0.18;
 }
 
-function visibleItems<T extends Pair | TraitPair>(items: T[], meta: Map<number, Meta>, kind: 'tag' | 'trait', includeSexual: boolean, includeSpoiler: boolean, showBlockedTags = true) {
+function visibleItems<T extends Pair | TraitPair>(items: T[], meta: Map<number, Meta>, kind: 'tag' | 'trait', includeSexual: boolean, includeSpoiler: boolean, showBlockedTags = true, showTechnicalTags = true) {
   return items.filter((item) => {
     const metaItem = meta.get(item[0]);
     const spoiler = itemSpoiler(item, kind);
@@ -531,6 +635,7 @@ function visibleItems<T extends Pair | TraitPair>(items: T[], meta: Map<number, 
     if (!includeSexual && metaItem.sexual) return false;
     if (!includeSpoiler && spoiler > 0) return false;
     if (kind === 'tag' && metaItem.blocked && !showBlockedTags) return false;
+    if (kind === 'tag' && metaItem.tech && !showTechnicalTags) return false;
     return true;
   });
 }
@@ -908,40 +1013,44 @@ function pageItems<T>(items: T[], page: number, perPage = RESULTS_PER_PAGE) {
 }
 
 function App() {
+  const persistedState = useMemo(() => loadPersistedState(), []);
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>('vn');
-  const [query, setQuery] = useState('');
-  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [mode, setMode] = useState<Mode>(() => persistedState?.mode ?? 'vn');
+  const [query, setQuery] = useState(() => persistedState?.query ?? '');
+  const [submittedQuery, setSubmittedQuery] = useState(() => persistedState?.submittedQuery ?? '');
   const [selectedVns, setSelectedVns] = useState<Vn[]>([]);
   const [selectedCharacters, setSelectedCharacters] = useState<Character[]>([]);
   const [vnDetails, setVnDetails] = useState<Record<number, Detail>>({});
   const [characterDetails, setCharacterDetails] = useState<Record<number, Detail>>({});
   const [recommendationDetails, setRecommendationDetails] = useState<Record<string, Detail>>({});
   const [showRecommendations, setShowRecommendations] = useState(false);
-  const [showSexual, setShowSexual] = useState(false);
-  const [showSpoiler, setShowSpoiler] = useState(false);
-  const [showBlockedTags, setShowBlockedTags] = useState(false);
+  const [showSexual, setShowSexual] = useState(() => persistedState?.showSexual ?? false);
+  const [showSpoiler, setShowSpoiler] = useState(() => persistedState?.showSpoiler ?? false);
+  const [showBlockedTags, setShowBlockedTags] = useState(() => persistedState?.showBlockedTags ?? false);
+  const [showTechnicalTags, setShowTechnicalTags] = useState(() => persistedState?.showTechnicalTags ?? false);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [metaLanguage, setMetaLanguage] = useState<MetaLanguage>('zh');
-  const [uiLanguage, setUiLanguage] = useState<UiLanguage>('zh');
+  const [metaLanguage, setMetaLanguage] = useState<MetaLanguage>(() => persistedState?.metaLanguage ?? 'zh');
+  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(() => persistedState?.uiLanguage ?? 'zh');
   const t = UI_TEXT[uiLanguage];
-  const [minVotes, setMinVotes] = useState(50);
-  const [tagLimit, setTagLimit] = useState(12);
-  const [traitLimit, setTraitLimit] = useState(16);
-  const [preferCharacterAverage, setPreferCharacterAverage] = useState(false);
-  const [tagRoleFilter, setTagRoleFilter] = useState<CharacterRoleFilter>({ primary: true, main: true, side: true, appears: true });
-  const [resultSort, setResultSort] = useState<ResultSort>('relevance');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [darkMode, setDarkMode] = useState(false);
+  const [minVotes, setMinVotes] = useState(() => persistedState?.minVotes ?? 50);
+  const [tagLimit, setTagLimit] = useState(() => persistedState?.tagLimit ?? 12);
+  const [traitLimit, setTraitLimit] = useState(() => persistedState?.traitLimit ?? 16);
+  const [preferCharacterAverage, setPreferCharacterAverage] = useState(() => persistedState?.preferCharacterAverage ?? false);
+  const [tagRoleFilter, setTagRoleFilter] = useState<CharacterRoleFilter>(() => persistedState?.tagRoleFilter ?? defaultRoleFilter());
+  const [resultSort, setResultSort] = useState<ResultSort>(() => persistedState?.resultSort ?? 'relevance');
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => persistedState?.sortDirection ?? 'desc');
+  const [darkMode, setDarkMode] = useState(() => persistedState?.darkMode ?? false);
   const [githubStars, setGithubStars] = useState<number | null>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [resultPage, setResultPage] = useState(1);
-  const [localSearchPage, setLocalSearchPage] = useState(1);
-  const [priorityTags, setPriorityTags] = useState<Set<number>>(() => new Set());
-  const [priorityTraits, setPriorityTraits] = useState<Set<number>>(() => new Set());
-  const [tagSearchTags, setTagSearchTags] = useState<Set<number>>(() => new Set());
-  const [tagSearchTraits, setTagSearchTraits] = useState<Set<number>>(() => new Set());
+  const [resultPage, setResultPage] = useState(() => persistedState?.resultPage ?? 1);
+  const [localSearchPage, setLocalSearchPage] = useState(() => persistedState?.localSearchPage ?? 1);
+  const [priorityTags, setPriorityTags] = useState<Set<number>>(() => new Set(persistedState?.priorityTagIds ?? []));
+  const [priorityTraits, setPriorityTraits] = useState<Set<number>>(() => new Set(persistedState?.priorityTraitIds ?? []));
+  const [tagSearchTags, setTagSearchTags] = useState<Set<number>>(() => new Set(persistedState?.tagSearchTagIds ?? []));
+  const [tagSearchTraits, setTagSearchTraits] = useState<Set<number>>(() => new Set(persistedState?.tagSearchTraitIds ?? []));
+  const [persistenceReady, setPersistenceReady] = useState(!persistedState);
+  const [deferredDataWorkReady, setDeferredDataWorkReady] = useState(!persistedState);
   const detailQueueRef = useRef<QueuedDetailRequest[]>([]);
   const detailQueueVersionRef = useRef(0);
   const detailQueueRunningRef = useRef<number | null>(null);
@@ -951,6 +1060,10 @@ function App() {
   const recommendationRequestIdRef = useRef(0);
   const localResultsRef = useRef<HTMLDivElement | null>(null);
   const recommendationResultsRef = useRef<HTMLElement | null>(null);
+  const persistedSelectionsRestoredRef = useRef(!persistedState);
+  const recommendationResetReadyRef = useRef(false);
+  const localSearchResetReadyRef = useRef(false);
+  const requestedSampleDetailsRef = useRef(new Set<string>());
   const [workerReady, setWorkerReady] = useState(false);
   const [workerComputing, setWorkerComputing] = useState(false);
   const [workerResult, setWorkerResult] = useState<WorkerResult>({ vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] });
@@ -1008,12 +1121,24 @@ function App() {
     };
     const load = async () => {
       try {
-        const textValue = await loadDataText(DATA_GZIP_PATH, true, controller.signal, updateProgress);
+        const textValue = await loadDataSource(controller.signal, updateProgress);
         if (cancelled) return;
         setLoadProgress(96);
         const raw = JSON.parse(textValue) as Data;
         if (cancelled) return;
-        setData(decodeLocalData(raw));
+        const decoded = decodeLocalData(raw);
+        if (persistedState && !persistedSelectionsRestoredRef.current) {
+          const restoredVnIds = new Set(persistedState.selectedVnIds);
+          const restoredCharacterIds = new Set(persistedState.selectedCharacterIds);
+          setSelectedVns(decoded.vns.filter((vn) => restoredVnIds.has(vn.id)));
+          setSelectedCharacters(decoded.characters.filter((character) => restoredCharacterIds.has(character.id)));
+          persistedSelectionsRestoredRef.current = true;
+        }
+        setData(decoded);
+        setPersistenceReady(true);
+        window.requestAnimationFrame(() => {
+          if (!cancelled) setDeferredDataWorkReady(true);
+        });
         setLoadProgress(100);
       } catch (reason) {
         if (!controller.signal.aborted) setError(String(reason));
@@ -1027,6 +1152,65 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!persistedSelectionsRestoredRef.current) return;
+    if (!selectedVns.length && !selectedCharacters.length) return;
+    for (const vn of selectedVns) {
+      const key = `v${vn.id}`;
+      if (requestedSampleDetailsRef.current.has(key) || vnDetails[vn.id]) continue;
+      requestedSampleDetailsRef.current.add(key);
+      requestVnDetail(vn.id, 'sample');
+    }
+    for (const character of selectedCharacters) {
+      const key = `c${character.id}`;
+      if (requestedSampleDetailsRef.current.has(key) || characterDetails[character.id]) continue;
+      requestedSampleDetailsRef.current.add(key);
+      requestCharacterDetail(character.id, 'sample');
+    }
+  }, [selectedVns, selectedCharacters, vnDetails, characterDetails]);
+
+  useEffect(() => {
+    if (!data || !persistenceReady) return;
+    const state: PersistedState = {
+      version: PERSISTED_STATE_VERSION,
+      mode,
+      query,
+      submittedQuery,
+      selectedVnIds: selectedVns.map((vn) => vn.id),
+      selectedCharacterIds: selectedCharacters.map((character) => character.id),
+      showSexual,
+      showSpoiler,
+      showBlockedTags,
+      showTechnicalTags,
+      metaLanguage,
+      uiLanguage,
+      minVotes,
+      tagLimit,
+      traitLimit,
+      preferCharacterAverage,
+      tagRoleFilter,
+      resultSort,
+      sortDirection,
+      darkMode,
+      resultPage,
+      localSearchPage,
+      priorityTagIds: [...priorityTags],
+      priorityTraitIds: [...priorityTraits],
+      tagSearchTagIds: [...tagSearchTags],
+      tagSearchTraitIds: [...tagSearchTraits]
+    };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [data, persistenceReady, mode, query, submittedQuery, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, minVotes, tagLimit, traitLimit, preferCharacterAverage, tagRoleFilter, resultSort, sortDirection, darkMode, resultPage, localSearchPage, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
+
+  useEffect(() => {
+    if (!persistedSelectionsRestoredRef.current) return;
+    if (!recommendationResetReadyRef.current) {
+      recommendationResetReadyRef.current = true;
+      return;
+    }
     recommendationDetailVersionRef.current += 1;
     detailQueueRef.current = detailQueueRef.current.filter((item) => !item.key.startsWith('recommendation-'));
     setShowRecommendations(false);
@@ -1035,10 +1219,16 @@ function App() {
   }, [mode, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, minVotes, tagLimit, traitLimit, preferCharacterAverage, tagRoleFilter, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
 
   useEffect(() => {
+    if (!recommendationResetReadyRef.current) return;
     setResultPage(1);
   }, [resultSort, sortDirection]);
 
   useEffect(() => {
+    if (!persistedSelectionsRestoredRef.current) return;
+    if (!localSearchResetReadyRef.current) {
+      localSearchResetReadyRef.current = true;
+      return;
+    }
     setLocalSearchPage(1);
   }, [mode, submittedQuery, selectedVns, selectedCharacters, isMobile]);
 
@@ -1048,13 +1238,24 @@ function App() {
   const visibleSexualTraitIds = useMemo(() => new Set(data?.traits.filter((trait) => showSexual && trait.sexual).map((trait) => trait.id) ?? []), [data, showSexual]);
   const vnById = useMemo(() => new Map(data?.vns.map((vn) => [vn.id, vn]) ?? []), [data]);
   const characterById = useMemo(() => new Map(data?.characters.map((character) => [character.id, character]) ?? []), [data]);
-  const directTagUsageCounts = useMemo(() => directMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag'), [data, tagMeta]);
-  const directTraitUsageCounts = useMemo(() => directMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait'), [data, traitMeta]);
-  const tagUsageCounts = useMemo(() => searchableMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag', showSexual, showSpoiler, (vn) => (vn.votes ?? 0) >= minVotes), [data, tagMeta, showSexual, showSpoiler, minVotes]);
-  const traitUsageCounts = useMemo(() => searchableMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait', showSexual, showSpoiler, (character) => character.vns?.some(([id, role]) => (vnById.get(id)?.votes ?? 0) >= minVotes && roleAllowed(role, tagRoleFilter)) ?? false), [data, traitMeta, showSexual, showSpoiler, vnById, minVotes, tagRoleFilter]);
+
+  useEffect(() => {
+    if (!data || !persistedState || persistedSelectionsRestoredRef.current) return;
+    const nextSelectedVns = persistedState.selectedVnIds.map((id) => vnById.get(id)).filter((vn): vn is Vn => Boolean(vn));
+    const nextSelectedCharacters = persistedState.selectedCharacterIds.map((id) => characterById.get(id)).filter((character): character is Character => Boolean(character));
+    setSelectedVns(nextSelectedVns);
+    setSelectedCharacters(nextSelectedCharacters);
+    persistedSelectionsRestoredRef.current = true;
+    setPersistenceReady(true);
+  }, [data, persistedState, vnById, characterById]);
+
+  const directTagUsageCounts = useMemo(() => deferredDataWorkReady ? directMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag') : new Map<number, number>(), [deferredDataWorkReady, data, tagMeta]);
+  const directTraitUsageCounts = useMemo(() => deferredDataWorkReady ? directMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait') : new Map<number, number>(), [deferredDataWorkReady, data, traitMeta]);
+  const tagUsageCounts = useMemo(() => deferredDataWorkReady ? searchableMetaUsageCounts(data?.vns ?? [], data?.tags ?? [], tagMeta, 'tags', 'tag', showSexual, showSpoiler, (vn) => (vn.votes ?? 0) >= minVotes) : new Map<number, number>(), [deferredDataWorkReady, data, tagMeta, showSexual, showSpoiler, minVotes]);
+  const traitUsageCounts = useMemo(() => deferredDataWorkReady ? searchableMetaUsageCounts(data?.characters ?? [], data?.traits ?? [], traitMeta, 'traits', 'trait', showSexual, showSpoiler, (character) => character.vns?.some(([id, role]) => (vnById.get(id)?.votes ?? 0) >= minVotes && roleAllowed(role, tagRoleFilter)) ?? false) : new Map<number, number>(), [deferredDataWorkReady, data, traitMeta, showSexual, showSpoiler, vnById, minVotes, tagRoleFilter]);
 
   const searchResults = useMemo(() => {
-    if (!data) return [];
+    if (!data || !deferredDataWorkReady) return [];
     const q = text(submittedQuery);
     if (!q) return [];
     if (mode === 'vn') {
@@ -1080,7 +1281,7 @@ function App() {
         const right = Math.max(0, ...a.vns.map(([id]) => matchedVnRank.get(id) ?? 0)) * 1000 + characterDisplayScore(a, vnById, false);
         return left - right;
       });
-  }, [data, mode, submittedQuery, vnById, selectedVns, selectedCharacters]);
+  }, [data, deferredDataWorkReady, mode, submittedQuery, vnById, selectedVns, selectedCharacters]);
 
   const localSearchPerPage = isMobile && mode === 'vn' ? MOBILE_VN_SEARCH_RESULTS_PER_PAGE : LOCAL_SEARCH_RESULTS_PER_PAGE;
   const localSearchPageCount = pageCount(searchResults.length, localSearchPerPage);
@@ -1116,14 +1317,14 @@ function App() {
   const tagSearchSexualTraitIds = useMemo(() => selectedSexualAlternativeIds(tagSearchTraitGroups, traitMeta), [tagSearchTraitGroups, traitMeta]);
 
   useEffect(() => {
-    if (!data || !recommendationWorkerRef.current) return;
+    if (!data || !deferredDataWorkReady || !recommendationWorkerRef.current) return;
     setWorkerReady(false);
     setWorkerComputing(false);
     recommendationWorkerRef.current.postMessage({ type: 'init', data });
-  }, [data]);
+  }, [data, deferredDataWorkReady]);
 
   useEffect(() => {
-    if (!data || !workerReady || !recommendationWorkerRef.current) return;
+    if (!data || !persistenceReady || !workerReady || !recommendationWorkerRef.current) return;
     const requestId = recommendationRequestIdRef.current + 1;
     recommendationRequestIdRef.current = requestId;
     setWorkerComputing(true);
@@ -1151,7 +1352,7 @@ function App() {
         sortDirection
       }
     });
-  }, [data, workerReady, selectedVns, selectedCharacters, activeVnProfile, activeCharacterProfile, activePriorityTags, activePriorityTraits, tagSearchTags, tagSearchTraits, tagSearchTagGroups, tagSearchTraitGroups, tagSearchSexualTagIds, tagSearchSexualTraitIds, minVotes, showSpoiler, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
+  }, [data, persistenceReady, workerReady, selectedVns, selectedCharacters, activeVnProfile, activeCharacterProfile, activePriorityTags, activePriorityTraits, tagSearchTags, tagSearchTraits, tagSearchTagGroups, tagSearchTraitGroups, tagSearchSexualTagIds, tagSearchSexualTraitIds, minVotes, showSpoiler, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
 
   const vnRecommendations = useMemo<Recommendation<Vn>[]>(() => workerResult.vnRecommendations
     .map((item) => {
@@ -1197,6 +1398,8 @@ function App() {
     })
     .filter(Boolean)
     .map((item) => item as MixedTagResult), [workerResult.mixedTagResults, workerResult.tagSearchVnResults, workerResult.tagSearchCharacterResults, vnById, characterById]);
+
+  const dataBuildDate = data?.buildDateUtc8 ?? (data ? formatUtc8Date(data.generatedAt) : null);
 
   if (error) return <main className="shell"><section className="panel error">{error}</section></main>;
   if (!data) return <main className="shell loadingShell"><section className="panel loadingPanel"><div className="progressRing" style={{ '--progress': `${loadProgress}%` } as React.CSSProperties}><span>{loadProgress}%</span></div><strong>{t.loading}</strong></section></main>;
@@ -1337,7 +1540,10 @@ function App() {
   };
 
   const profileItems = mode === 'vn'
-    ? [...vnProfile.entries()].filter(([id]) => showBlockedTags || !tagMeta.get(id)?.blocked).sort((a, b) => b[1] - a[1])
+    ? [...vnProfile.entries()].filter(([id]) => {
+      const meta = tagMeta.get(id);
+      return (showBlockedTags || !meta?.blocked) && (showTechnicalTags || !meta?.tech || priorityTags.has(id));
+    }).sort((a, b) => b[1] - a[1])
     : [...characterProfile.entries()].sort((a, b) => b[1] - a[1]);
   const groupedProfileTraits = mode === 'character' ? profileTraitGroups(profileItems, traitMeta, showSexual) : [];
 
@@ -1359,7 +1565,23 @@ function App() {
             <div>
               <p className="eyebrow">{t.source}</p>
               <h1>VNDB Profile Search</h1>
-              <button className="themeToggle" onClick={() => setDarkMode((value) => !value)}>{darkMode ? t.themeLight : t.themeDark}</button>
+              <div className="heroControls">
+                <button className="themeToggle" onClick={() => setDarkMode((value) => !value)}>{darkMode ? t.themeLight : t.themeDark}</button>
+                <div className="languageControlsCompact">
+                  <div className="languageTools compactLanguageTools" aria-label={t.metaLanguageLabel}>
+                    <span>{t.metaLanguage}</span>
+                    <button className={metaLanguage === 'zh' ? 'active' : ''} onClick={() => setMetaLanguage('zh')}>中文</button>
+                    <button className={metaLanguage === 'ja' ? 'active' : ''} onClick={() => setMetaLanguage('ja')}>日本語</button>
+                    <button className={metaLanguage === 'origin' ? 'active' : ''} onClick={() => setMetaLanguage('origin')}>origin</button>
+                  </div>
+                  <div className="languageTools compactLanguageTools" aria-label={t.uiLanguageLabel}>
+                    <span>{t.uiLanguage}</span>
+                    <button className={uiLanguage === 'zh' ? 'active' : ''} onClick={() => setUiLanguage('zh')}>中文</button>
+                    <button className={uiLanguage === 'ja' ? 'active' : ''} onClick={() => setUiLanguage('ja')}>日本語</button>
+                    <button className={uiLanguage === 'en' ? 'active' : ''} onClick={() => setUiLanguage('en')}>English</button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="heroLinks" aria-label={t.projectLinks}>
               <a className="heroLinkCard" href={README_URL} target="_blank" rel="noreferrer">
@@ -1392,18 +1614,7 @@ function App() {
           <label><input type="checkbox" checked={showSexual} onChange={(event) => setShowSexual(event.target.checked)} /> {t.showR18}</label>
           <label><input type="checkbox" checked={showSpoiler} onChange={(event) => setShowSpoiler(event.target.checked)} /> {t.allowSpoiler}</label>
           {(mode === 'vn' || mode === 'tag') ? <label><input type="checkbox" checked={showBlockedTags} onChange={(event) => setShowBlockedTags(event.target.checked)} /> {t.showBlockedTags}</label> : null}
-          <div className="languageTools" aria-label={t.metaLanguageLabel}>
-            <span>{t.metaLanguage}</span>
-            <button className={metaLanguage === 'zh' ? 'active' : ''} onClick={() => setMetaLanguage('zh')}>中文</button>
-            <button className={metaLanguage === 'ja' ? 'active' : ''} onClick={() => setMetaLanguage('ja')}>日本語</button>
-            <button className={metaLanguage === 'origin' ? 'active' : ''} onClick={() => setMetaLanguage('origin')}>origin</button>
-          </div>
-          <div className="languageTools" aria-label={t.uiLanguageLabel}>
-            <span>{t.uiLanguage}</span>
-            <button className={uiLanguage === 'zh' ? 'active' : ''} onClick={() => setUiLanguage('zh')}>中文</button>
-            <button className={uiLanguage === 'ja' ? 'active' : ''} onClick={() => setUiLanguage('ja')}>日本語</button>
-            <button className={uiLanguage === 'en' ? 'active' : ''} onClick={() => setUiLanguage('en')}>English</button>
-          </div>
+          {mode === 'vn' ? <label><input type="checkbox" checked={showTechnicalTags} onChange={(event) => setShowTechnicalTags(event.target.checked)} /> {t.showTechnicalTags}</label> : null}
         </div>
         <div className="toolbarRow toolbarSpecific">
           {mode !== 'tag' ? <label className="searchBox">
@@ -1422,9 +1633,9 @@ function App() {
             <button onClick={() => changeLocalSearchPage(currentLocalSearchPage - 1)} disabled={currentLocalSearchPage <= 1}>{isMobile && mode === 'vn' ? t.previousItem : t.previous}</button>
             <button onClick={() => changeLocalSearchPage(currentLocalSearchPage + 1)} disabled={currentLocalSearchPage >= localSearchPageCount}>{isMobile && mode === 'vn' ? t.nextItem : t.next}</button>
           </div>
-          <div className="list">
+          <div className={`list localSearchList ${isMobile && mode === 'vn' ? 'mobileVnLocalList' : ''}`}>
             {visibleSearchResults.map((item) => mode === 'vn'
-              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} onAdd={() => addSelection(item)} />
+              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} onAdd={() => addSelection(item)} />
               : <CharacterCard key={`ch-${(item as Character).id}`} character={item as Character} vns={vnById} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} onAdd={() => addSelection(item)} />)}
           </div>
         </div>
@@ -1432,7 +1643,7 @@ function App() {
           <h2>{t.selectedSamples}</h2>
           <div className="list compact">
             {mode === 'vn'
-              ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} detail={vnDetails[vn.id]} showMedia showDescription={false} onRemove={() => setSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
+              ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} detail={vnDetails[vn.id]} showMedia showDescription={false} onRemove={() => setSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
               : selectedCharacters.map((character) => <CharacterCard key={`selected-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} onRemove={() => setSelectedCharacters((list) => list.filter((it) => it.id !== character.id))} />)}
           </div>
           <div className="profileHead">
@@ -1445,7 +1656,7 @@ function App() {
               const name = metaName(meta, showSexual, metaLanguage);
               const priority = priorityTags.has(id);
               const chipSpoilerClass = spoilerClass(vnProfileSpoilers.get(id) ?? 0);
-              return <button key={`g-${id}`} className={`chip ${meta.sexual ? 'sexual' : ''} ${meta.tech ? 'technical' : ''} ${meta.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, showSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
+              return <button key={`g-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${meta.tech ? 'technical' : ''} ${meta.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, showSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
             })}
           </div> : <div className="traitGroupList profileChips">
             {groupedProfileTraits.map(([label, items]) => <div className="traitGroup" key={`profile-group-${label}`}>
@@ -1457,7 +1668,7 @@ function App() {
                   const name = metaName(meta, showSexual, metaLanguage);
                   const priority = priorityTraits.has(id);
                   const chipSpoilerClass = spoilerClass(characterProfileSpoilers.get(id) ?? 0);
-                  return <button key={`i-${id}`} className={`chip ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, showSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
+                  return <button key={`i-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, showSexual, metaLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
                 })}
               </div>
             </div>)}
@@ -1508,19 +1719,20 @@ function App() {
         </div>
         {showRecommendations ? <div className="list results">
           {mode === 'vn'
-            ? visibleVnRecommendations.map((vn) => <VnCard key={`rec-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} relations={vn.relations.map(([id, relation]) => vnById.get(id) ? `${relation}: ${vnById.get(id)?.title}` : null).filter(Boolean) as string[]} />)
+            ? visibleVnRecommendations.map((vn) => <VnCard key={`rec-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} relations={vn.relations.map(([id, relation]) => vnById.get(id) ? `${relation}: ${vnById.get(id)?.title}` : null).filter(Boolean) as string[]} />)
             : mode === 'character'
               ? visibleCharacterRecommendations.map((character) => <CharacterCard key={`rec-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} />)
               : tagSearchTags.size && tagSearchTraits.size
                 ? visibleMixedTagResults.map((result) => <MixedTagCard key={`mixed-${result.vn.id}-${result.character.id}`} result={result} tagMeta={tagMeta} traitMeta={traitMeta} vns={vnById} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} vnDetail={recommendationDetails[`v${result.vn.id}`]} characterDetail={recommendationDetails[`c${result.character.id}`]} minVotes={minVotes} roleFilter={tagRoleFilter} />)
                 : tagSearchTags.size
-                  ? visibleTagSearchVnResults.map((vn) => <VnCard key={`tag-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} />)
+                  ? visibleTagSearchVnResults.map((vn) => <VnCard key={`tag-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} detail={recommendationDetails[`v${vn.id}`]} showMedia similarity={vn.similarity} overlap={vn.overlap} priorityMatched={vn.priorityMatched} priorityTotal={vn.priorityTotal} priorityConfidence={vn.priorityConfidence} />)
                   : visibleTagSearchCharacterResults.map((character) => <CharacterCard key={`tag-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={showSexual} showSpoiler={showSpoiler} metaLanguage={metaLanguage} preferAverage={preferCharacterAverage} detail={recommendationDetails[`c${character.id}`]} showMedia similarity={character.similarity} overlap={character.overlap} priorityMatched={character.priorityMatched} priorityTotal={character.priorityTotal} priorityConfidence={character.priorityConfidence} minVotes={minVotes} roleFilter={tagRoleFilter} />)}
         </div> : workerComputing ? null : <div className="empty">{`${t.candidates}：${activeResultCount.toLocaleString()}。${t.choosePage}`}</div>}
       </section>
 
       <footer className="footer">
-        {t.license}
+        {dataBuildDate ? <div>{`${t.dataLastUpdated}：UTC+08:00 ${dataBuildDate}`}</div> : null}
+        <div>{t.license}</div>
       </footer>
     </main>
   );
@@ -1819,7 +2031,7 @@ function ProducerLinks({ producers }: { producers: Producer[] }) {
   return <div className="mini">厂商：{unique.slice(0, 5).map((producer, index) => <React.Fragment key={`producer-${producer.id}-${index}`}>{index ? ' / ' : ''}<a href={vndbUrl('p', producer.id)} target="_blank" rel="noreferrer">{producer.name}</a></React.Fragment>)}</div>;
 }
 
-function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, metaLanguage, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, relations = [] }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; metaLanguage: MetaLanguage; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; relations?: string[] }) {
+function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, showTechnicalTags = true, metaLanguage, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, relations = [] }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; showTechnicalTags?: boolean; metaLanguage: MetaLanguage; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; relations?: string[] }) {
   const producers = detail?.developers?.length ? detail.developers : [...vn.developers, ...vn.publishers];
   return (
     <article className={`card ${showMedia ? '' : 'noMedia'}`}>
@@ -1833,7 +2045,7 @@ function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, met
         <div className="metrics"><span>v{vn.id}</span><span>rating {vn.rating.toFixed(1)}</span><span>{vn.votes} votes</span>{detail?.loading ? <span>详情加载中</span> : null}{detail?.error ? <span>详情失败</span> : null}{similarity !== undefined ? <span>相似 {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>重合 {overlap}</span> : null}{priorityTotal ? <span>重点置信 {priorityMatched}/{priorityTotal}（{(Math.min(priorityConfidence ?? ((priorityMatched ?? 0) / priorityTotal), 1) * 100).toFixed(0)}%）</span> : null}</div>
         <ProducerLinks producers={producers} />
         {showDescription && detail?.description ? <p className="description">{cleanDescription(detail.description)}</p> : null}
-        <div className="chips">{visibleItems(vn.tags, meta, 'tag', showSexual, showSpoiler, showBlockedTags).map((tag, index) => <MetaChip key={`vn-tag-${vn.id}-${tag[0]}-${index}`} item={tag} meta={meta} kind="tag" showSexual={showSexual} metaLanguage={metaLanguage} />)}</div>
+        <div className="chips">{visibleItems(vn.tags, meta, 'tag', showSexual, showSpoiler, showBlockedTags, showTechnicalTags).map((tag, index) => <MetaChip key={`vn-tag-${vn.id}-${tag[0]}-${index}`} item={tag} meta={meta} kind="tag" showSexual={showSexual} metaLanguage={metaLanguage} />)}</div>
         {relations.length ? <div className="relations">相关：{relations.slice(0, 5).join(' / ')}</div> : null}
       </div>
     </article>

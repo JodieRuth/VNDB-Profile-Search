@@ -8,3 +8,4 @@ Thumbs.db
 .env.*
 .tmp-vndb-dump/
 public/data/vndb-prototype.json
+.claude/
