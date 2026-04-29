@@ -12,21 +12,28 @@ type SortDirection = 'desc' | 'asc';
 type RecRef = { id: number; similarity: number; overlap: number; priorityMatched: number; priorityTotal: number; priorityConfidence: number };
 type MixedRef = { vnId: number; characterId: number; similarity: number; priorityMatched: number; priorityTotal: number; priorityConfidence: number };
 type MetaSearchGroupRef = { selectedId: number; alternatives: number[] };
+type WorkerResultVariant = { vnRecommendations: RecRef[]; characterRecommendations: RecRef[]; tagSearchVnResults: RecRef[]; tagSearchCharacterResults: RecRef[]; mixedTagResults: MixedRef[] };
+type WorkerResult = { spoilerOff: WorkerResultVariant; spoilerOn: WorkerResultVariant };
 type ComputeParams = {
   selectedVnIds: number[];
   selectedCharacterIds: number[];
-  activeVnProfile: [number, number][];
-  activeCharacterProfile: [number, number][];
+  activeVnProfileSpoilerOff: [number, number][];
+  activeVnProfileSpoilerOn: [number, number][];
+  activeCharacterProfileSpoilerOff: [number, number][];
+  activeCharacterProfileSpoilerOn: [number, number][];
   activePriorityTags: number[];
   activePriorityTraits: number[];
   tagSearchTags: number[];
   tagSearchTraits: number[];
-  tagSearchTagGroups: MetaSearchGroupRef[];
-  tagSearchTraitGroups: MetaSearchGroupRef[];
-  tagSearchSexualTagIds: number[];
-  tagSearchSexualTraitIds: number[];
+  tagSearchTagGroupsSpoilerOff: MetaSearchGroupRef[];
+  tagSearchTagGroupsSpoilerOn: MetaSearchGroupRef[];
+  tagSearchTraitGroupsSpoilerOff: MetaSearchGroupRef[];
+  tagSearchTraitGroupsSpoilerOn: MetaSearchGroupRef[];
+  tagSearchSexualTagIdsSpoilerOff: number[];
+  tagSearchSexualTagIdsSpoilerOn: number[];
+  tagSearchSexualTraitIdsSpoilerOff: number[];
+  tagSearchSexualTraitIdsSpoilerOn: number[];
   minVotes: number;
-  showSpoiler: boolean;
   tagRoleFilter: CharacterRoleFilter;
   preferCharacterAverage: boolean;
   resultSort: ResultSort;
@@ -349,24 +356,30 @@ function characterConsensusBonuses(candidates: Array<{ id: number; vector: Map<n
   return new Map([...totals.entries()].map(([id, value]) => [id, value / sampleProfiles.length]));
 }
 
-function compute(params: ComputeParams) {
-  if (!data) return { vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] };
+function emptyWorkerResultVariant(): WorkerResultVariant {
+  return { vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] };
+}
+
+function computeVariant(params: ComputeParams, includeSpoiler: boolean): WorkerResultVariant {
+  if (!data) return emptyWorkerResultVariant();
   const selectedVnIdSet = new Set(params.selectedVnIds);
   const selectedCharacterIdSet = new Set(params.selectedCharacterIds);
   const selectedVns = params.selectedVnIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
-  const activeVnProfile = new Map(params.activeVnProfile);
-  const activeCharacterProfile = new Map(params.activeCharacterProfile);
+  const activeVnProfile = new Map(includeSpoiler ? params.activeVnProfileSpoilerOn : params.activeVnProfileSpoilerOff);
+  const activeCharacterProfile = new Map(includeSpoiler ? params.activeCharacterProfileSpoilerOn : params.activeCharacterProfileSpoilerOff);
   const activePriorityTags = new Set(params.activePriorityTags);
   const activePriorityTraits = new Set(params.activePriorityTraits);
+  const tagSearchTagGroups = includeSpoiler ? params.tagSearchTagGroupsSpoilerOn : params.tagSearchTagGroupsSpoilerOff;
+  const tagSearchTraitGroups = includeSpoiler ? params.tagSearchTraitGroupsSpoilerOn : params.tagSearchTraitGroupsSpoilerOff;
   const tagSearchTagAlternativeIds = new Set(params.tagSearchTags);
-  for (const group of params.tagSearchTagGroups) for (const id of group.alternatives) tagSearchTagAlternativeIds.add(id);
-  const tagSearchSexualTagIds = new Set(params.tagSearchSexualTagIds);
-  const tagSearchSexualTraitIds = new Set(params.tagSearchSexualTraitIds);
+  for (const group of tagSearchTagGroups) for (const id of group.alternatives) tagSearchTagAlternativeIds.add(id);
+  const tagSearchSexualTagIds = new Set(includeSpoiler ? params.tagSearchSexualTagIdsSpoilerOn : params.tagSearchSexualTagIdsSpoilerOff);
+  const tagSearchSexualTraitIds = new Set(includeSpoiler ? params.tagSearchSexualTraitIdsSpoilerOn : params.tagSearchSexualTraitIdsSpoilerOff);
 
   const vnRecommendations = (!params.selectedVnIds.length || !activeVnProfile.size) ? [] : topRecommendations(data.vns
     .filter((vn) => !selectedVnIdSet.has(vn.id) && vn.votes >= params.minVotes && !isSameCompanyPrefixDuplicate(vn, selectedVns))
     .map((vn) => {
-      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', params.showSpoiler, true, activePriorityTags), tagMeta, activePriorityTags);
+      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, activePriorityTags), tagMeta, activePriorityTags);
       const priorityMatched = priorityMatch(activePriorityTags, vector);
       const priorityTotal = activePriorityTags.size;
       const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
@@ -379,11 +392,11 @@ function compute(params: ComputeParams) {
     const sampleProfiles = params.selectedCharacterIds
       .map((id) => data?.characters.find((character) => character.id === id))
       .filter(Boolean)
-      .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', params.showSpoiler, true, activePriorityTraits));
+      .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits));
     const candidates = data.characters
       .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
       .map((character) => {
-        const vector = makeVector(character.traits, traitMeta, 'trait', params.showSpoiler, true, activePriorityTraits);
+        const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits);
         const priorityMatched = priorityMatch(activePriorityTraits, vector);
         const priorityTotal = activePriorityTraits.size;
         const priorityConfidence = priorityTotal ? priorityMatched / priorityTotal : 1;
@@ -395,33 +408,33 @@ function compute(params: ComputeParams) {
     return topRecommendations(candidates.map((character) => ({ ...character, consensusBonus: consensusBonuses.get(character.id) ?? 0 })), activePriorityTraits.size, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100) + (character.consensusBonus ?? 0) * 0.8);
   })();
 
-  const tagSearchVnCandidates = !params.tagSearchTagGroups.length ? [] : data.vns
+  const tagSearchVnCandidates = !tagSearchTagGroups.length ? [] : data.vns
     .filter((vn) => vn.votes >= params.minVotes)
     .map((vn) => {
-      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', params.showSpoiler, true, tagSearchSexualTagIds, true), tagMeta, tagSearchTagAlternativeIds);
-      const priorityMatched = groupedPriorityMatch(params.tagSearchTagGroups, vector);
-      const priorityTotal = params.tagSearchTagGroups.length;
-      const priorityConfidence = groupedMetaConfidence(params.tagSearchTagGroups, vector);
-      const similarity = groupedMetaScore(params.tagSearchTagGroups, vector) * (0.65 + priorityConfidence * 0.35);
+      const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, tagSearchSexualTagIds, true), tagMeta, tagSearchTagAlternativeIds);
+      const priorityMatched = groupedPriorityMatch(tagSearchTagGroups, vector);
+      const priorityTotal = tagSearchTagGroups.length;
+      const priorityConfidence = groupedMetaConfidence(tagSearchTagGroups, vector);
+      const similarity = groupedMetaScore(tagSearchTagGroups, vector) * (0.65 + priorityConfidence * 0.35);
       return { id: vn.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, rating: vn.rating, votes: vn.votes };
     })
     .filter((vn) => vn.similarity > 0);
 
-  const tagSearchVnResults = topTagMatches(tagSearchVnCandidates, params.tagSearchTagGroups.length, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1));
+  const tagSearchVnResults = topTagMatches(tagSearchVnCandidates, tagSearchTagGroups.length, (vn) => vn.similarity * 100 + vn.rating / 10 + Math.log10(vn.votes || 1));
 
-  const tagSearchCharacterCandidates = !params.tagSearchTraitGroups.length ? [] : data.characters
+  const tagSearchCharacterCandidates = !tagSearchTraitGroups.length ? [] : data.characters
     .filter((character) => characterHasQualifiedVn(character, params.minVotes, params.tagRoleFilter))
     .map((character) => {
-      const vector = makeVector(character.traits, traitMeta, 'trait', params.showSpoiler, true, tagSearchSexualTraitIds);
-      const priorityMatched = groupedPriorityMatch(params.tagSearchTraitGroups, vector);
-      const priorityTotal = params.tagSearchTraitGroups.length;
-      const priorityConfidence = groupedMetaConfidence(params.tagSearchTraitGroups, vector);
-      const similarity = groupedMetaScore(params.tagSearchTraitGroups, vector) * (0.65 + priorityConfidence * 0.35);
+      const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, tagSearchSexualTraitIds);
+      const priorityMatched = groupedPriorityMatch(tagSearchTraitGroups, vector);
+      const priorityTotal = tagSearchTraitGroups.length;
+      const priorityConfidence = groupedMetaConfidence(tagSearchTraitGroups, vector);
+      const similarity = groupedMetaScore(tagSearchTraitGroups, vector) * (0.65 + priorityConfidence * 0.35);
       return { id: character.id, similarity, overlap: priorityMatched, priorityMatched, priorityTotal, priorityConfidence, score: character.score, character };
     })
     .filter((character) => character.similarity > 0);
 
-  const tagSearchCharacterResults = topTagMatches(tagSearchCharacterCandidates, params.tagSearchTraitGroups.length, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100));
+  const tagSearchCharacterResults = topTagMatches(tagSearchCharacterCandidates, tagSearchTraitGroups.length, (character) => character.similarity * 100 + (params.preferCharacterAverage ? characterAverageScore(character.character) / 10 : character.score / 100));
 
   const mixedTagResults: MixedRef[] = (() => {
     if (!params.tagSearchTags.length || !params.tagSearchTraits.length) return [];
@@ -453,6 +466,10 @@ function compute(params: ComputeParams) {
     tagSearchCharacterResults: sortedTagSearchCharacterResults.map(({ id, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence }) => ({ id, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence })),
     mixedTagResults: sortedMixedTagResults
   };
+}
+
+function compute(params: ComputeParams): WorkerResult {
+  return { spoilerOff: computeVariant(params, false), spoilerOn: computeVariant(params, true) };
 }
 
 self.onmessage = (event: MessageEvent<WorkerInput>) => {

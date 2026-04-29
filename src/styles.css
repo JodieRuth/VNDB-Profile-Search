@@ -1477,6 +1477,33 @@ body:has(.themeDark) {
   box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.44) inset;
 }
 
+.chip.selectedMetaChip,
+button.chip.selectedMetaChip,
+.themeLight .chip.selectedMetaChip,
+.themeLight button.chip.selectedMetaChip,
+.themeDark .chip.selectedMetaChip,
+.themeDark button.chip.selectedMetaChip {
+  background: #2563eb;
+  color: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(30, 64, 175, 0.28) inset, 0 0 18px rgba(37, 99, 235, 0.18);
+}
+
+button.chip.selectedMetaChip.matched,
+.themeLight button.chip.selectedMetaChip.matched,
+.themeDark button.chip.selectedMetaChip.matched {
+  background: #2563eb;
+  color: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.62), 0 0 18px rgba(37, 99, 235, 0.2);
+}
+
+.themeDark .chip.selectedMetaChip,
+.themeDark button.chip.selectedMetaChip,
+.themeDark button.chip.selectedMetaChip.matched {
+  background: rgba(37, 99, 235, 0.92);
+  color: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.38) inset, 0 0 18px rgba(37, 99, 235, 0.22);
+}
+
 .themeLight button.danger,
 .themeLight .selected button {
   background: rgba(239, 68, 68, 0.12);

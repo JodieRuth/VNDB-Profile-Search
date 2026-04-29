@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
@@ -22,6 +22,9 @@ const formatUtc8Date = (date) => {
   const value = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}:${value.second}`;
 };
+const movedMetaTranslations = { tags: new Set(), traits: new Set() };
+const movedDescriptionTranslations = { tags: new Set(), traits: new Set() };
+
 const decodedTranslationValue = (entry, key) => {
   const value = entry?.[key];
   if (!value) return '';
@@ -51,32 +54,106 @@ metaDescriptionTranslations.traits ??= {};
 let metaTranslationsChanged = false;
 let descriptionTranslationsChanged = false;
 
-for (const group of [metaTranslations.tags, metaTranslations.traits]) {
-  for (const entry of Object.values(group)) encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+const orderedTranslationEntry = (entry, metadataKeys = []) => {
+  const result = {};
+  for (const key of metadataKeys) {
+    if (Object.hasOwn(entry, key)) result[key] = entry[key];
+  }
+  for (const key of ['en', 'zh', 'ja', 'enEncoded', 'zhEncoded', 'jaEncoded']) {
+    if (Object.hasOwn(entry, key)) result[key] = entry[key];
+  }
+  for (const [key, value] of Object.entries(entry)) {
+    if (!Object.hasOwn(result, key)) result[key] = value;
+  }
+  return result;
+};
+
+const normalizeMetaTranslationEntry = (kind, entry) => orderedTranslationEntry(entry, kind === 'tags' ? ['vndbId', 'category', 'sexual'] : ['vndbId', 'group', 'sexual']);
+const normalizeDescriptionTranslationEntry = (entry) => orderedTranslationEntry(entry);
+
+for (const [kind, group] of Object.entries(metaTranslations)) {
+  for (const [key, entry] of Object.entries(group)) {
+    encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+    group[key] = normalizeMetaTranslationEntry(kind, entry);
+  }
 }
 for (const group of [metaDescriptionTranslations.tags, metaDescriptionTranslations.traits]) {
-  for (const entry of Object.values(group)) encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+  for (const [key, entry] of Object.entries(group)) {
+    encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+    group[key] = normalizeDescriptionTranslationEntry(entry);
+  }
 }
 metaTranslationsChanged = true;
 descriptionTranslationsChanged = true;
 
 function ensureMetaTranslation(kind, id, fields) {
   const key = String(id);
-  if (metaTranslations[kind][key]) return;
-  metaTranslations[kind][key] = { ...fields, en: encodedText(fields.en), enEncoded: true, zh: '', ja: '' };
+  const existing = metaTranslations[kind][key];
+  const metadata = kind === 'tags'
+    ? { vndbId: fields.vndbId, category: fields.category, sexual: fields.sexual }
+    : { vndbId: fields.vndbId, group: fields.group, sexual: fields.sexual };
+  if (existing) {
+    const previousEn = decodedTranslationValue(existing, 'en');
+    if (previousEn !== fields.en) {
+      delete metaTranslations[kind][key];
+      metaTranslations[kind][key] = normalizeMetaTranslationEntry(kind, { ...metadata, en: encodedText(fields.en), zh: '', ja: '', enEncoded: true });
+      movedMetaTranslations[kind].add(key);
+      metaTranslationsChanged = true;
+      return;
+    }
+    Object.assign(existing, metadata);
+    metaTranslations[kind][key] = normalizeMetaTranslationEntry(kind, existing);
+    return;
+  }
+  metaTranslations[kind][key] = normalizeMetaTranslationEntry(kind, { ...metadata, en: encodedText(fields.en), zh: '', ja: '', enEncoded: true });
+  movedMetaTranslations[kind].add(key);
   metaTranslationsChanged = true;
 }
 
 function ensureDescriptionTranslation(kind, id, description) {
   const key = String(id);
-  if (metaDescriptionTranslations[kind][key]) return;
-  metaDescriptionTranslations[kind][key] = { en: encodedText(cleanDescription(description)), enEncoded: true, zh: '', ja: '' };
+  const en = cleanDescription(description);
+  const existing = metaDescriptionTranslations[kind][key];
+  if (existing) {
+    if (cleanDescription(decodedTranslationValue(existing, 'en')) !== en) {
+      delete metaDescriptionTranslations[kind][key];
+      metaDescriptionTranslations[kind][key] = normalizeDescriptionTranslationEntry({ en: encodedText(en), zh: '', ja: '', enEncoded: true });
+      movedDescriptionTranslations[kind].add(key);
+      descriptionTranslationsChanged = true;
+      return;
+    }
+    metaDescriptionTranslations[kind][key] = normalizeDescriptionTranslationEntry(existing);
+    return;
+  }
+  metaDescriptionTranslations[kind][key] = normalizeDescriptionTranslationEntry({ en: encodedText(en), zh: '', ja: '', enEncoded: true });
+  movedDescriptionTranslations[kind].add(key);
   descriptionTranslationsChanged = true;
 }
 
+const stringifyIndentedJson = (value, indent) => JSON.stringify(value, null, 2).split('\n').map((line, index) => index === 0 ? line : `${indent}${line}`).join('\n');
+const stringifyTranslationGroup = (group, movedKeys, indent) => {
+  const entries = Object.entries(group);
+  const orderedEntries = [
+    ...entries.filter(([key]) => !movedKeys.has(key)),
+    ...entries.filter(([key]) => movedKeys.has(key))
+  ];
+  if (!orderedEntries.length) return '{}';
+  const lines = ['{'];
+  orderedEntries.forEach(([key, value], index) => {
+    const comma = index === orderedEntries.length - 1 ? '' : ',';
+    lines.push(`${indent}"${key}": ${stringifyIndentedJson(value, indent)}${comma}`);
+  });
+  lines.push(`${indent.slice(0, -2)}}`);
+  return lines.join('\n');
+};
+const stringifyTranslationFile = (value, moved) => `{
+  "tags": ${stringifyTranslationGroup(value.tags, moved.tags, '    ')},
+  "traits": ${stringifyTranslationGroup(value.traits, moved.traits, '    ')}
+}\n`;
+
 function saveTranslationPlaceholders() {
-  if (metaTranslationsChanged) writeFileSync(translationPath, `${JSON.stringify(metaTranslations, null, 2)}\n`, 'utf8');
-  if (descriptionTranslationsChanged) writeFileSync(descriptionTranslationPath, `${JSON.stringify(metaDescriptionTranslations, null, 2)}\n`, 'utf8');
+  if (metaTranslationsChanged) writeFileSync(translationPath, stringifyTranslationFile(metaTranslations, movedMetaTranslations), 'utf8');
+  if (descriptionTranslationsChanged) writeFileSync(descriptionTranslationPath, stringifyTranslationFile(metaDescriptionTranslations, movedDescriptionTranslations), 'utf8');
 }
 
 function translatedMetaFields(kind, id) {
@@ -599,6 +676,13 @@ function stringifyPayload(payload) {
   return `${lines.join('\n')}\n`;
 }
 
+function cleanOldCompressedData(keepFileName) {
+  for (const fileName of readdirSync(outRoot)) {
+    if (!/^vndb-prototype(?:\.[0-9a-f]{16})?\.json\.gz$/u.test(fileName) || fileName === keepFileName) continue;
+    rmSync(join(outRoot, fileName), { force: true });
+  }
+}
+
 mkdirSync(outRoot, { recursive: true });
 const generatedDate = new Date();
 const generatedAt = generatedDate.toISOString();
@@ -618,6 +702,7 @@ const jsonPayload = stringifyPayload(payload);
 const gzipPayload = gzipSync(jsonPayload, { level: 9 });
 const gzipHash = createHash('sha256').update(gzipPayload).digest('hex');
 const gzipFileName = `vndb-prototype.${gzipHash.slice(0, 16)}.json.gz`;
+cleanOldCompressedData(gzipFileName);
 const dataPath = join(outRoot, 'vndb-prototype.json');
 const hashedGzipPath = join(outRoot, gzipFileName);
 const manifestPath = join(outRoot, 'manifest.json');

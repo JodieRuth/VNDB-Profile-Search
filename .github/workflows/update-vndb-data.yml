@@ -38,7 +38,9 @@ jobs:
           tar -xf .tmp-vndb-dump/vndb-db-latest.tar.zst -C .tmp-vndb-dump/extract
 
       - name: Remove old generated compressed data
-        run: git rm -f --ignore-unmatch public/data/vndb-prototype*.json.gz public/data/manifest.json
+        run: |
+          git rm -f --ignore-unmatch public/data/vndb-prototype*.json.gz public/data/manifest.json
+          rm -f public/data/vndb-prototype*.json.gz
 
       - name: Generate local data
         run: npm run generate:data
