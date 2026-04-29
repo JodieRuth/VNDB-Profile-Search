@@ -1,4 +1,4 @@
-type Pair = [number, number, number, number];
+type Pair = [number, number, number, number, number?];
 type TraitPair = [number, number, number];
 type VnRelation = [number, string, number];
 type Producer = { id: number; name: string; nameEncoded?: boolean; original: string | null; originalEncoded?: boolean; type: string; lang: string };
@@ -117,7 +117,11 @@ function itemSpoiler(item: Pair | TraitPair, kind: 'tag' | 'trait') {
 }
 
 function itemLie(item: Pair | TraitPair, kind: 'tag' | 'trait') {
-  return kind === 'tag' ? item[3] ?? 0 : item[2] ?? 0;
+  if (kind !== 'tag') return item[2] ?? 0;
+  const lieCount = item[3] ?? 0;
+  const voteCount = item[4];
+  if (voteCount === undefined) return lieCount;
+  return voteCount > 50 ? lieCount / voteCount >= 0.05 : lieCount >= 4;
 }
 
 function canUseMetaForSearch(metaItem: Meta, spoiler: number, includeSpoiler: boolean, allowedSexualIds?: Set<number>) {

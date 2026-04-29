@@ -2,7 +2,7 @@ import React, { Component, startTransition, useCallback, useDeferredValue, useEf
 import { createRoot, type Root } from 'react-dom/client';
 import './styles.css';
 
-type Pair = [number, number, number, number];
+type Pair = [number, number, number, number, number?];
 type TraitPair = [number, number, number];
 type VnRelation = [number, VnRelationType, number];
 type VnRelationType = 'seq' | 'preq' | 'set' | 'alt' | 'char' | 'side' | 'par' | 'ser' | 'fan' | 'orig' | string;
@@ -859,7 +859,11 @@ function itemSpoiler(item: Pair | TraitPair, kind: 'tag' | 'trait') {
 }
 
 function itemLie(item: Pair | TraitPair, kind: 'tag' | 'trait') {
-  return kind === 'tag' ? item[3] ?? 0 : item[2] ?? 0;
+  if (kind !== 'tag') return item[2] ?? 0;
+  const lieCount = item[3] ?? 0;
+  const voteCount = item[4];
+  if (voteCount === undefined) return lieCount;
+  return voteCount > 50 ? lieCount / voteCount >= 0.05 : lieCount >= 4;
 }
 
 function canUseMetaForSearch(metaItem: Meta, spoiler: number, includeSpoiler: boolean, allowedSexualIds?: Set<number>) {

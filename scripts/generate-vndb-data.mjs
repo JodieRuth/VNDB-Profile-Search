@@ -431,11 +431,11 @@ await scanTable('tags_vn', (row) => {
   const vote = num(row.vote) ?? 0;
   if (vote <= 0) return;
   const key = `${vid}:${tid}`;
-  const agg = vnTagAgg.get(key) ?? { sum: 0, count: 0, spoiler: 0, lie: false };
+  const agg = vnTagAgg.get(key) ?? { sum: 0, count: 0, spoiler: 0, lieCount: 0 };
   agg.sum += vote;
   agg.count += 1;
   agg.spoiler = Math.max(agg.spoiler, num(row.spoiler) ?? 0);
-  agg.lie ||= row.lie === 't';
+  if (row.lie === 't') agg.lieCount += 1;
   vnTagAgg.set(key, agg);
 });
 for (const [key, agg] of vnTagAgg) {
@@ -443,7 +443,7 @@ for (const [key, agg] of vnTagAgg) {
   const vn = vnMap.get(Number(vidText));
   if (!vn) continue;
   const rating = agg.sum / agg.count;
-  vn.tags.push([Number(tidText), Number(rating.toFixed(2)), agg.spoiler, agg.lie ? 1 : 0]);
+  vn.tags.push([Number(tidText), Number(rating.toFixed(2)), agg.spoiler, agg.lieCount, agg.count]);
 }
 for (const vn of vnMap.values()) {
   vn.tags.sort((a, b) => b[1] - a[1]);

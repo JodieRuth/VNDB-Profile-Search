@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-04-29T22:52:48.237Z",
-  "buildDateUtc8": "2026-04-30 06:52:48",
-  "dataPath": "./data/vndb-prototype.8c6031ee7ce5a4e0.json.gz",
-  "sha256": "8c6031ee7ce5a4e030a3f1c7c1b5e92a64c2d78e14e2fcb3570ea31c06f1d4be",
-  "size": 56034911,
+  "generatedAt": "2026-04-29T23:19:38.882Z",
+  "buildDateUtc8": "2026-04-30 07:19:38",
+  "dataPath": "./data/vndb-prototype.c03463cbc06b20bc.json.gz",
+  "sha256": "c03463cbc06b20bcc84a719f5c64362e3b054d79eac30be9312f8830199ed9c5",
+  "size": 56302857,
   "stats": {
-    "vns": 62082,
-    "characters": 162915,
+    "vns": 62021,
+    "characters": 162784,
     "tags": 2982,
     "traits": 3321,
     "blockedTags": 1332,
-    "producers": 28050
+    "producers": 28018
   }
 }
