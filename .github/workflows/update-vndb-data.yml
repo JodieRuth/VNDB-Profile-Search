@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+env:
+  DATA_RELEASE_TAG: data-latest
+  DATA_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/data-latest
+
 jobs:
   update-vndb-data:
     runs-on: ubuntu-latest
@@ -44,6 +48,8 @@ jobs:
 
       - name: Generate local data
         run: npm run generate:data
+        env:
+          VNDB_DATA_RELEASE_BASE_URL: ${{ env.DATA_RELEASE_BASE_URL }}
 
       - name: Build project
         run: npm run build
@@ -61,3 +67,10 @@ jobs:
         with:
           commit_message: "chore: update VNDB generated data"
           file_pattern: public/data/vndb-prototype*.json.gz public/data/manifest.json public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
+
+      - name: Recreate data release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$DATA_RELEASE_TAG" --cleanup-tag --yes || true
+          gh release create "$DATA_RELEASE_TAG" public/data/vndb-prototype*.json.gz --title "VNDB data latest" --notes "Generated at $(node -p \"require('./public/data/manifest.json').generatedAt\")"

@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dbRoot = join(root, '.tmp-vndb-dump', 'extract', 'db');
 const outRoot = join(root, 'public', 'data');
+const dataReleaseBaseUrl = process.env.VNDB_DATA_RELEASE_BASE_URL?.replace(/\/+$/u, '');
 
 const bool = (value) => value === 't';
 const nil = (value) => value === '\\N' || value === undefined ? null : value;
@@ -744,7 +745,7 @@ const manifestPath = join(outRoot, 'manifest.json');
 const manifest = {
   generatedAt: payload.generatedAt,
   buildDateUtc8: payload.buildDateUtc8,
-  dataPath: `./data/${gzipFileName}`,
+  dataPath: dataReleaseBaseUrl ? `${dataReleaseBaseUrl}/${gzipFileName}` : `./data/${gzipFileName}`,
   sha256: gzipHash,
   size: gzipPayload.length,
   stats: payload.stats
