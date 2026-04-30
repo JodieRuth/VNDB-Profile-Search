@@ -123,6 +123,7 @@ type WorkerProgressState = Partial<Record<WorkerProgressPhase, { current: number
 type MetaSearchGroup = { selectedId: number; alternatives: Set<number> };
 type MetaFilterClass = 'sexual' | 'spoiler' | 'blocked' | 'technical' | 'normal';
 type DataManifest = { dataPath?: string; path?: string; sha256?: string; generatedAt?: string; buildDateUtc8?: string; size?: number };
+type DataCacheRecord = { key: string; dataPath: string; sha256?: string; bytes: ArrayBuffer; size: number; createdAt: number };
 type LoadStageKey = 'loadingStageReady' | 'loadingStageReadManifest' | 'loadingStagePrepareDownload' | 'loadingStageCompressedDownloadComplete' | 'loadingStageDownloadGzip' | 'loadingStageReadPlainText' | 'loadingStageDecompressGzip' | 'loadingStageParseJsonPrepare' | 'loadingStageParseJson' | 'loadingStageDecodeFields' | 'loadingStageRestoreState' | 'loadingStageCommitData' | 'loadingStagePrepareIndex' | 'loadingStageComplete' | 'errorRenderMain' | 'errorRuntime';
 type LoadProgressDetail = { loaded: number; total: number; speed: number };
 type LoadState = { progress: number; stage: LoadStageKey; detail?: LoadProgressDetail | null };
@@ -166,6 +167,9 @@ const README_URL = `${REPOSITORY_URL}#readme`;
 const ISSUE_URL = `${REPOSITORY_URL}/issues/new`;
 const GITHUB_REPO_API = 'https://api.github.com/repos/JodieRuth/VNDB-Profile-Search';
 const DATA_MANIFEST_PATH = './data/manifest.json';
+const DATA_CACHE_DB_NAME = 'vndb-profile-search-data-cache';
+const DATA_CACHE_DB_VERSION = 1;
+const DATA_CACHE_STORE_NAME = 'data-files';
 const STORAGE_KEY = 'vndb-profile-search-state-v1';
 const META_SELECTOR_STORAGE_PREFIX = 'vndb-profile-search-meta-selector-v1';
 const PERSISTED_STATE_VERSION = 1;
@@ -717,6 +721,76 @@ function saveMetaSelectorState(kind: 'tag' | 'trait', state: MetaSelectorPersist
   }
 }
 
+function openDataCacheDb() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const request = window.indexedDB.open(DATA_CACHE_DB_NAME, DATA_CACHE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DATA_CACHE_STORE_NAME)) db.createObjectStore(DATA_CACHE_STORE_NAME, { keyPath: 'key' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));
+    request.onblocked = () => reject(new Error('IndexedDB open blocked'));
+  });
+}
+
+function readDataCacheRecord(db: IDBDatabase, cacheKey: string) {
+  return new Promise<DataCacheRecord | null>((resolve, reject) => {
+    const transaction = db.transaction(DATA_CACHE_STORE_NAME, 'readonly');
+    const request = transaction.objectStore(DATA_CACHE_STORE_NAME).get(cacheKey);
+    request.onsuccess = () => resolve((request.result as DataCacheRecord | undefined) ?? null);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB read failed'));
+  });
+}
+
+function writeDataCacheRecord(db: IDBDatabase, record: DataCacheRecord) {
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(DATA_CACHE_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(DATA_CACHE_STORE_NAME);
+    store.put(record);
+    const keysRequest = store.getAllKeys();
+    keysRequest.onsuccess = () => {
+      for (const key of keysRequest.result) {
+        if (key !== record.key) store.delete(key);
+      }
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB write failed'));
+  });
+}
+
+async function readCachedDataBytes(cacheKey: string, dataPath: string, sha256?: string) {
+  let db: IDBDatabase | null = null;
+  try {
+    db = await openDataCacheDb();
+    const record = await readDataCacheRecord(db, cacheKey);
+    if (!record || record.dataPath !== dataPath || (sha256 && record.sha256 !== sha256)) return null;
+    return new Uint8Array(record.bytes);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+async function writeCachedDataBytes(cacheKey: string, dataPath: string, sha256: string | undefined, bytes: Uint8Array) {
+  let db: IDBDatabase | null = null;
+  try {
+    db = await openDataCacheDb();
+    const source = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const buffer = new ArrayBuffer(source.byteLength);
+    new Uint8Array(buffer).set(new Uint8Array(source));
+    await writeDataCacheRecord(db, { key: cacheKey, dataPath, sha256, bytes: buffer, size: bytes.byteLength, createdAt: Date.now() });
+  } catch {
+  } finally {
+    db?.close();
+  }
+}
+
 function resolveDataPath(manifest: DataManifest) {
   const path = manifest.dataPath ?? manifest.path;
   if (!path) throw new Error(localizedText('errorDataManifestPathMissing', storedUiLanguage()));
@@ -729,8 +803,17 @@ async function loadDataSource(signal: AbortSignal, onProgress: (state: LoadProgr
   const response = await fetch(DATA_MANIFEST_PATH, { cache: 'no-cache', signal });
   if (!response.ok) throw new Error(String(response.status));
   const manifest = await response.json() as DataManifest;
+  const dataPath = resolveDataPath(manifest);
+  const cacheKey = `data:${manifest.sha256 ?? dataPath}`;
   onProgress({ progress: 5, stage: 'loadingStagePrepareDownload' });
-  return loadDataText(resolveDataPath(manifest), true, signal, onProgress, manifest.size ?? 0);
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  const cachedBytes = await readCachedDataBytes(cacheKey, dataPath, manifest.sha256);
+  if (cachedBytes) {
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    onProgress({ progress: 75, stage: 'loadingStageCompressedDownloadComplete', detail: { loaded: cachedBytes.byteLength, total: cachedBytes.byteLength, speed: 0 } });
+    return dataBytesToText(cachedBytes, true, '', onProgress);
+  }
+  return loadDataText(dataPath, true, signal, onProgress, manifest.size ?? 0, cacheKey, manifest.sha256);
 }
 
 const decode = (value: string) => {
@@ -815,11 +898,7 @@ async function responseBytes(response: Response, onProgress: (state: LoadProgres
   return result;
 }
 
-async function loadDataText(url: string, compressed: boolean, signal: AbortSignal, onProgress: (state: LoadProgressUpdate) => void, manifestSize = 0) {
-  const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`${localizedText('errorDataFileReadFailed', storedUiLanguage())}：${response.status}`);
-  const bytes = await responseBytes(response, onProgress, manifestSize);
-  const contentEncoding = response.headers.get('content-encoding')?.toLocaleLowerCase() ?? '';
+async function dataBytesToText(bytes: Uint8Array, compressed: boolean, contentEncoding: string, onProgress: (state: LoadProgressUpdate) => void) {
   const hasGzipHeader = bytes[0] === 0x1f && bytes[1] === 0x8b;
   if (!compressed || contentEncoding.includes('gzip') || !hasGzipHeader) {
     onProgress({ progress: 82, stage: 'loadingStageReadPlainText', detail: null });
@@ -827,10 +906,19 @@ async function loadDataText(url: string, compressed: boolean, signal: AbortSigna
   }
   if (typeof DecompressionStream === 'undefined') throw new Error(localizedText('errorUnsupportedGzip', storedUiLanguage()));
   onProgress({ progress: 78, stage: 'loadingStageDecompressGzip', detail: null });
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const stream = new Blob([bytes.slice()]).stream().pipeThrough(new DecompressionStream('gzip'));
   const textValue = await new Response(stream).text();
   onProgress({ progress: 82, stage: 'loadingStageParseJsonPrepare', detail: null });
   return textValue;
+}
+
+async function loadDataText(url: string, compressed: boolean, signal: AbortSignal, onProgress: (state: LoadProgressUpdate) => void, manifestSize = 0, cacheKey?: string, sha256?: string) {
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`${localizedText('errorDataFileReadFailed', storedUiLanguage())}：${response.status}`);
+  const bytes = await responseBytes(response, onProgress, manifestSize);
+  if (cacheKey) void writeCachedDataBytes(cacheKey, url, sha256, bytes);
+  const contentEncoding = response.headers.get('content-encoding')?.toLocaleLowerCase() ?? '';
+  return dataBytesToText(bytes, compressed, contentEncoding, onProgress);
 }
 
 function commonPrefixLength(a: string, b: string) {
