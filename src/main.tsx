@@ -2426,6 +2426,7 @@ function App() {
         <div className="sectionHead">
           <h2>{mode === 'vn' ? t.vnRecommendations : mode === 'character' ? t.characterRecommendations : t.tagResults}</h2>
           <div className="resultControlBar">
+            {(mode === 'character' || mode === 'tag') ? <label><input type="checkbox" checked={preferCharacterAverage} onChange={(event) => setPreferCharacterAverage(event.target.checked)} /> {t.preferAverage}</label> : null}
             <label className="selectControl">{t.sort}
               <select value={resultSort} onChange={(event) => setResultSort(event.target.value as ResultSort)}>
                 <option value="relevance">{t.relevance}</option>
@@ -2446,7 +2447,6 @@ function App() {
             {mode === 'vn'
               ? <label className="votes limitControl">{t.tagLimit} <input type="number" min={1} max={60} value={tagLimit} onChange={(event) => setTagLimit(Number(event.target.value))} /></label>
               : mode === 'character' ? <label className="votes limitControl">{t.traitLimit} <input type="number" min={1} max={80} value={traitLimit} onChange={(event) => setTraitLimit(Number(event.target.value))} /></label> : null}
-            {(mode === 'character' || mode === 'tag') ? <label><input type="checkbox" checked={preferCharacterAverage} onChange={(event) => setPreferCharacterAverage(event.target.checked)} /> {t.preferAverage}</label> : null}
             {mode === 'tag' ? <div className="roleFilters" aria-label={t.roleType}>
               <span>{t.roleType}</span>
               <label><input type="checkbox" checked={tagRoleFilter.primary} onChange={(event) => setTagRoleFilter((current) => ({ ...current, primary: event.target.checked }))} /> {t.primary}</label>
