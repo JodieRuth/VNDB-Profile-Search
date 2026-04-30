@@ -243,7 +243,7 @@ function stableUnitRandom(seed: string, key: string) {
   return (hashText(`${seed}|${key}`) + 1) / 4294967297;
 }
 
-function sampledSearchVector(vector: Map<number, number>, limit: number, meta: Map<number, Meta>, priorityIds: Set<number>, round: number, allowedSexualIds?: Set<number>) {
+function sampledSearchVector(vector: Map<number, number>, limit: number, meta: Map<number, Meta>, priorityIds: Set<number>, round: number, allowedSexualIds?: Set<number>, coverageCounts = new Map<number, number>()) {
   const expanded = expandVectorParents(vector, meta, allowedSexualIds);
   const count = Math.max(1, limit);
   const entries = [...expanded.entries()].sort((a, b) => b[1] - a[1]);
@@ -256,7 +256,10 @@ function sampledSearchVector(vector: Map<number, number>, limit: number, meta: M
     let bestScore = Number.POSITIVE_INFINITY;
     for (let index = 0; index < pool.length; index += 1) {
       const [id, value] = pool[index];
-      const weight = Math.max(value, 0.000001);
+      const seenCount = coverageCounts.get(id) ?? 0;
+      const coverageBoost = seenCount === 0 ? 1.8 : 1;
+      const repeatPenalty = Math.pow(1 + seenCount, 0.75);
+      const weight = Math.max(value * coverageBoost / repeatPenalty, 0.000001);
       const random = Math.max(stableUnitRandom(seed, `${round}|${selected.size}|${id}`), 0.000001);
       const score = -Math.log(random) / weight;
       if (score < bestScore) {
@@ -275,18 +278,18 @@ function sampledSearchVector(vector: Map<number, number>, limit: number, meta: M
   return result;
 }
 
-function buildActiveVnProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0) {
+function buildActiveVnProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
   const selected = selectedIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
   if (!selected.length) return new Map<number, number>();
   const direct = mergeVectors(selected.map((vn) => makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, false, priorityIds)));
-  return sampledSearchVector(omitUnprioritizedSpecialTags(direct, tagMeta, priorityIds), limit, tagMeta, priorityIds, round, priorityIds);
+  return sampledSearchVector(omitUnprioritizedSpecialTags(direct, tagMeta, priorityIds), limit, tagMeta, priorityIds, round, priorityIds, coverageCounts);
 }
 
-function buildActiveCharacterProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0) {
+function buildActiveCharacterProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
   const selected = selectedIds.map((id) => characterById.get(id)).filter(Boolean) as Character[];
   if (!selected.length) return new Map<number, number>();
   const direct = mergeVectors(selected.map((character) => makeVector(character.traits, traitMeta, 'trait', includeSpoiler, false, priorityIds)));
-  return sampledSearchVector(direct, limit, traitMeta, priorityIds, round, priorityIds);
+  return sampledSearchVector(direct, limit, traitMeta, priorityIds, round, priorityIds, coverageCounts);
 }
 
 function priorityMatch(query: Set<number>, candidate: Map<number, number>) {
@@ -561,16 +564,23 @@ function postProgress(requestId: number, phase: 'randomize' | 'search' | 'fit', 
   self.postMessage({ type: 'progress', requestId, phase, current, total });
 }
 
-function buildDistinctProfiles(rounds: number, requestId: number, buildProfile: (round: number) => Map<number, number>) {
+function buildDistinctProfiles(rounds: number, requestId: number, buildProfile: (round: number, coverageCounts: Map<number, number>) => Map<number, number>) {
   const profiles: Map<number, number>[] = [];
-  const signatures = new Set<string>();
+  const signatures = new Map<string, number>();
+  const coverageCounts = new Map<number, number>();
+  let repeatedProfiles = 0;
   for (let round = 0; round < rounds; round += 1) {
-    const profile = buildProfile(round);
+    const profile = buildProfile(round, coverageCounts);
     if (!profile.size) break;
     const signature = profileSignature(profile);
-    if (signatures.has(signature)) break;
-    signatures.add(signature);
+    const signatureCount = signatures.get(signature) ?? 0;
+    if (signatureCount > 0) {
+      repeatedProfiles += 1;
+      if (repeatedProfiles >= 10) break;
+    }
+    signatures.set(signature, signatureCount + 1);
     profiles.push(profile);
+    for (const id of profile.keys()) coverageCounts.set(id, (coverageCounts.get(id) ?? 0) + 1);
     postProgress(requestId, 'randomize', profiles.length, rounds);
   }
   if (profiles.length < rounds) postProgress(requestId, 'randomize', profiles.length || 1, profiles.length || 1);
@@ -580,7 +590,7 @@ function buildDistinctProfiles(rounds: number, requestId: number, buildProfile: 
 function computeVnRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedVnIdSet: Set<number>, selectedVns: Vn[], activePriorityTags: Set<number>, requestId: number): Array<RecRef & Pick<Vn, 'rating' | 'votes'>> {
   if (!params.selectedVnIds.length) return [];
   const rounds = Math.max(1, Math.floor(params.profileSampleRounds || 1));
-  const activeVnProfiles = buildDistinctProfiles(rounds, requestId, (round) => buildActiveVnProfile(params.selectedVnIds, includeSpoiler, activePriorityTags, params.tagLimit, round));
+  const activeVnProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveVnProfile(params.selectedVnIds, includeSpoiler, activePriorityTags, params.tagLimit, round, coverageCounts));
   const lists: Array<Array<RecRef & Pick<Vn, 'rating' | 'votes'>>> = [];
   for (let index = 0; index < activeVnProfiles.length; index += 1) {
     const activeVnProfile = activeVnProfiles[index];
@@ -608,7 +618,7 @@ function computeCharacterRecommendations(params: ComputeParams, includeSpoiler: 
     .map((id) => characterById.get(id))
     .filter(Boolean)
     .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits));
-  const activeCharacterProfiles = buildDistinctProfiles(rounds, requestId, (round) => buildActiveCharacterProfile(params.selectedCharacterIds, includeSpoiler, activePriorityTraits, params.traitLimit, round));
+  const activeCharacterProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveCharacterProfile(params.selectedCharacterIds, includeSpoiler, activePriorityTraits, params.traitLimit, round, coverageCounts));
   const referenceDeveloperIds = selectedCharacterDeveloperIds(params.selectedCharacterIds);
   const lists: Array<Array<RecRef & { score: number; character: Character; vector: Map<number, number>; consensusBonus?: number; companyBoost?: number }>> = [];
   for (let index = 0; index < activeCharacterProfiles.length; index += 1) {
