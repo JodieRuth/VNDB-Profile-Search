@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-04-30T21:08:41.785Z",
-  "buildDateUtc8": "2026-05-01 05:08:41",
-  "dataPath": "https://github.com/JodieRuth/VNDB-Profile-Search/releases/download/data-latest/vndb-prototype.a11409c7146915b4.json.gz",
-  "sha256": "a11409c7146915b4e287c20c176a4ca6d423b8d2e60b4be20c2fd23885662941",
+  "generatedAt": "2026-04-30T21:13:20.124Z",
+  "buildDateUtc8": "2026-05-01 05:13:20",
+  "dataPath": "https://raw.githubusercontent.com/JodieRuth/VNDB-Profile-Search/data-latest/public/data/vndb-prototype.c79d15e098e60e6e.json.gz",
+  "sha256": "c79d15e098e60e6e18efa17382b3a3f68c79d423f1fe13cef09c1db5f771ccfd",
   "size": 56359283,
   "stats": {
     "vns": 62122,
