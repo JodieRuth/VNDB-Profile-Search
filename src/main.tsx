@@ -2424,15 +2424,7 @@ function App() {
 
       <section className="panel" ref={recommendationResultsRef}>
         <div className="sectionHead">
-          <div>
-            <h2>{mode === 'vn' ? t.vnRecommendations : mode === 'character' ? t.characterRecommendations : t.tagResults}</h2>
-            {currentModeComputing ? <div className="recommendationProgress">
-              {workerProgress?.randomize ? <p>{t.randomizingProfile}{formatWorkerProgress(workerProgress.randomize)}</p> : null}
-              {workerProgress?.search ? <p>{t.computing}{formatWorkerProgress(workerProgress.search)}</p> : null}
-              {workerProgress?.fit ? <p>{t.fittingResults}</p> : null}
-              {!workerProgress ? <p>{t.computing}</p> : null}
-            </div> : <p>{recommendationStatusText}</p>}
-          </div>
+          <h2>{mode === 'vn' ? t.vnRecommendations : mode === 'character' ? t.characterRecommendations : t.tagResults}</h2>
           <div className="resultControlBar">
             <label className="selectControl">{t.sort}
               <select value={resultSort} onChange={(event) => setResultSort(event.target.value as ResultSort)}>
@@ -2468,6 +2460,14 @@ function App() {
             <button onClick={() => changeResultPage(currentResultPage + 1)} disabled={currentResultPage >= activePageCount}>{t.next}</button>
             <button onClick={showRecommendationResults} disabled={currentModeComputing || !currentModeHasCriteria || !workerReady}>{t.loadPage}</button>
           </div>
+        </div>
+        <div className="recommendationStatus">
+          {currentModeComputing ? <div className="recommendationProgress">
+            {workerProgress?.randomize ? <p>{t.randomizingProfile}{formatWorkerProgress(workerProgress.randomize)}</p> : null}
+            {workerProgress?.search ? <p>{t.computing}{formatWorkerProgress(workerProgress.search)}</p> : null}
+            {workerProgress?.fit ? <p>{t.fittingResults}</p> : null}
+            {!workerProgress ? <p>{t.computing}</p> : null}
+          </div> : <p>{recommendationStatusText}</p>}
         </div>
         {showRecommendations && activeResultCount > 0 ? <div ref={recommendationListRef} className="list results">
           {mode === 'vn'
