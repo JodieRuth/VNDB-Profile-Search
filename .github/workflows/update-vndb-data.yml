@@ -72,5 +72,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          generated_at=$(node -p "JSON.parse(require('fs').readFileSync('public/data/manifest.json', 'utf8')).generatedAt")
           gh release delete "$DATA_RELEASE_TAG" --cleanup-tag --yes || true
-          gh release create "$DATA_RELEASE_TAG" public/data/vndb-prototype*.json.gz --title "VNDB data latest" --notes "Generated at $(node -p \"require('./public/data/manifest.json').generatedAt\")"
+          gh release create "$DATA_RELEASE_TAG" public/data/vndb-prototype*.json.gz --title "VNDB data latest" --notes "Generated at ${generated_at}"
