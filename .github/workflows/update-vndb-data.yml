@@ -10,7 +10,7 @@ permissions:
 
 env:
   DATA_RELEASE_TAG: data-latest
-  DATA_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/data-latest
+  DATA_RELEASE_BASE_URL: https://raw.githubusercontent.com/${{ github.repository }}/data-latest/public/data
 
 jobs:
   update-vndb-data:
