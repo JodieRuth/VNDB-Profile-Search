@@ -1,0 +1,6 @@
+Database Contents License 1.0
+
+VNDB database contents are provided under the Database Contents License 1.0 except where VNDB's dump documentation specifies otherwise.
+
+Official license text:
+https://opendatacommons.org/licenses/dbcl/1-0/

@@ -722,10 +722,30 @@ mkdirSync(outRoot, { recursive: true });
 const generatedDate = new Date();
 const generatedAt = generatedDate.toISOString();
 const buildDateUtc8 = formatUtc8Date(generatedDate);
+const licenseFiles = {
+  notice: 'NOTICE-VNDB-DATA.txt',
+  odbl: 'LICENSE-ODBL-1.0.txt',
+  dbcl: 'LICENSE-DBCL-1.0.txt',
+  translations: 'LICENSE-TRANSLATIONS.txt',
+  ccBy40: 'LICENSE-CC-BY-4.0.txt'
+};
+const licenseFileText = Object.fromEntries(Object.entries(licenseFiles).map(([key, file]) => [key, { file: `./data/${file}`, text: readFileSync(join(outRoot, file), 'utf8') }]));
 const payload = {
   generatedAt,
   buildDateUtc8,
   source: 'VNDB near-complete database dump, complete local export',
+  sourceUrl: 'https://vndb.org/d14',
+  license: {
+    database: 'ODbL-1.0',
+    contents: 'DbCL-1.0',
+    notice: './data/NOTICE-VNDB-DATA.txt',
+    odbl: './data/LICENSE-ODBL-1.0.txt',
+    dbcl: './data/LICENSE-DBCL-1.0.txt',
+    translations: './data/LICENSE-TRANSLATIONS.txt',
+    ccBy40: './data/LICENSE-CC-BY-4.0.txt',
+    translationLicense: 'CC-BY-4.0',
+    files: licenseFileText
+  },
   limits: {},
   stats: { vns: vns.length, characters: characters.length, tags: tagMeta.size, traits: traitMeta.size, blockedTags: blockedTagIds.size, producers: producerMap.size },
   usageIndex,
@@ -748,6 +768,11 @@ const manifest = {
   dataPath: dataReleaseBaseUrl ? `${dataReleaseBaseUrl}/${gzipFileName}` : `./data/${gzipFileName}`,
   sha256: gzipHash,
   size: gzipPayload.length,
+  source: {
+    name: 'VNDB.org database dump',
+    url: payload.sourceUrl
+  },
+  license: payload.license,
   stats: payload.stats
 };
 writeFileSync(dataPath, jsonPayload);

@@ -1,0 +1,9 @@
+Open Database License 1.0
+
+The generated VNDB-derived database is provided under the Open Database License 1.0 where applicable.
+
+Official license text:
+https://opendatacommons.org/licenses/odbl/1-0/
+
+Human-readable summary:
+https://opendatacommons.org/licenses/odbl/summary/

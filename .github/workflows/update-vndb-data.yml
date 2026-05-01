@@ -44,7 +44,7 @@ jobs:
       - name: Remove old generated compressed data
         run: |
           git rm -f --ignore-unmatch public/data/vndb-prototype*.json.gz public/data/manifest.json
-          rm -f public/data/vndb-prototype*.json.gz
+          rm -f public/data/vndb-prototype*.json.gz public/data/vndb-prototype.json
 
       - name: Generate local data
         run: npm run generate:data
@@ -66,12 +66,17 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: update VNDB generated data"
-          file_pattern: public/data/vndb-prototype*.json.gz public/data/manifest.json public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json
+          file_pattern: public/data/vndb-prototype*.json.gz public/data/manifest.json public/data/vndb-meta-translations.json public/data/vndb-meta-description-translations.json public/data/NOTICE-VNDB-DATA.txt public/data/LICENSE-*.txt
 
       - name: Recreate data release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           generated_at=$(node -p "JSON.parse(require('fs').readFileSync('public/data/manifest.json', 'utf8')).generatedAt")
+          cat > release-notes.md <<EOF
+          Generated at ${generated_at}
+
+          This release contains a VNDB-derived search index. See NOTICE-VNDB-DATA.txt and the included license files for data licensing details.
+          EOF
           gh release delete "$DATA_RELEASE_TAG" --cleanup-tag --yes || true
-          gh release create "$DATA_RELEASE_TAG" public/data/vndb-prototype*.json.gz --title "VNDB data latest" --notes "Generated at ${generated_at}"
+          gh release create "$DATA_RELEASE_TAG" public/data/vndb-prototype*.json.gz public/data/manifest.json public/data/NOTICE-VNDB-DATA.txt public/data/LICENSE-*.txt --title "VNDB data latest" --notes-file release-notes.md

@@ -1,0 +1,9 @@
+Creative Commons Attribution 4.0 International
+
+The project-authored Chinese and Japanese Tag/Trait translation text is licensed under CC BY 4.0 when used separately from the generated VNDB-derived database.
+
+Official license text:
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Human-readable summary:
+https://creativecommons.org/licenses/by/4.0/

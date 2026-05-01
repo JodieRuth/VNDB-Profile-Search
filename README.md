@@ -228,7 +228,13 @@ npm run preview
 
 项目代码使用 MIT License。
 
-VNDB 数据请遵循 VNDB Data License。VNDB 的公开 dump 文档将 Tag/Trait 标为 Open Database License + Database Contents License，near-complete database dump 则以 VNDB Data License 或随包 README 为准。图片与外部内容的权利归各自权利人所有。
+生成的 VNDB 派生数据基于 VNDB.org database dumps，并在适用范围内按 Open Database License 1.0（ODbL）提供；数据库内容按 Database Contents License 1.0（DbCL）提供，但 VNDB dump 文档另行说明的例外内容除外。
+
+Tag/Trait 的中文和日文标题、描述翻译由本项目创建，不属于原始 VNDB database dump。它们被合并进生成索引时，生成索引整体仍在适用范围内按 ODbL 1.0 提供；翻译文本单独使用时按 CC BY 4.0 提供。
+
+图片、外部详情、运行时从 VNDB 请求的简介以及其他外部内容的权利归各自权利人所有。
+
+详见 [Notice](NOTICE.md) 和 [VNDB data notice](public/data/NOTICE-VNDB-DATA.txt)。
 
 ## 其他说明
 

@@ -1,9 +1,45 @@
 {
-  "generatedAt": "2026-04-30T21:13:20.124Z",
-  "buildDateUtc8": "2026-05-01 05:13:20",
-  "dataPath": "https://raw.githubusercontent.com/JodieRuth/VNDB-Profile-Search/data-latest/public/data/vndb-prototype.c79d15e098e60e6e.json.gz",
-  "sha256": "c79d15e098e60e6e18efa17382b3a3f68c79d423f1fe13cef09c1db5f771ccfd",
-  "size": 56359283,
+  "generatedAt": "2026-05-01T07:43:30.179Z",
+  "buildDateUtc8": "2026-05-01 15:43:30",
+  "dataPath": "./data/vndb-prototype.d655f20e721891d8.json.gz",
+  "sha256": "d655f20e721891d85eeb1ffdf6b69c8f1ed355398972476971c354c1314e989b",
+  "size": 56361228,
+  "source": {
+    "name": "VNDB.org database dump",
+    "url": "https://vndb.org/d14"
+  },
+  "license": {
+    "database": "ODbL-1.0",
+    "contents": "DbCL-1.0",
+    "notice": "./data/NOTICE-VNDB-DATA.txt",
+    "odbl": "./data/LICENSE-ODBL-1.0.txt",
+    "dbcl": "./data/LICENSE-DBCL-1.0.txt",
+    "translations": "./data/LICENSE-TRANSLATIONS.txt",
+    "ccBy40": "./data/LICENSE-CC-BY-4.0.txt",
+    "translationLicense": "CC-BY-4.0",
+    "files": {
+      "notice": {
+        "file": "./data/NOTICE-VNDB-DATA.txt",
+        "text": "VNDB Derived Data Notice\n\nThis directory contains generated data files used by VNDB Profile Search.\n\nThe generated search index, including VN/character metadata, Tag/Trait metadata, Tag/Trait descriptions, relationships, ratings, votes, and derived search indexes, is based on VNDB.org database dumps.\n\nSource database:\nhttps://vndb.org/d14\n\nThe VNDB database dump is made available under the Open Database License 1.0:\nhttps://opendatacommons.org/licenses/odbl/1-0/\n\nDatabase contents are made available under the Database Contents License 1.0:\nhttps://opendatacommons.org/licenses/dbcl/1-0/\n\nThis generated search index is distributed as a derived database under ODbL 1.0 where applicable. Database contents are available under DbCL 1.0 except for data categories that VNDB's dump documentation identifies as having separate license conditions.\n\nThis project does not include VN descriptions from db/vn.desc or character descriptions from db/chars.desc in the generated local index. Such descriptions, as well as images and other external details, may be requested from VNDB at runtime and remain subject to VNDB's terms and their respective rights holders.\n\nChinese and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump. When these translations are included in the generated VNDB-derived search index, the generated index as a whole is provided under ODbL 1.0 where applicable.\n\nThe translation text authored by this project may also be used separately under the license described in LICENSE-TRANSLATIONS.txt.\n\nVNDB and its data are not owned by this project.\n"
+      },
+      "odbl": {
+        "file": "./data/LICENSE-ODBL-1.0.txt",
+        "text": "Open Database License 1.0\n\nThe generated VNDB-derived database is provided under the Open Database License 1.0 where applicable.\n\nOfficial license text:\nhttps://opendatacommons.org/licenses/odbl/1-0/\n\nHuman-readable summary:\nhttps://opendatacommons.org/licenses/odbl/summary/\n"
+      },
+      "dbcl": {
+        "file": "./data/LICENSE-DBCL-1.0.txt",
+        "text": "Database Contents License 1.0\n\nVNDB database contents are provided under the Database Contents License 1.0 except where VNDB's dump documentation specifies otherwise.\n\nOfficial license text:\nhttps://opendatacommons.org/licenses/dbcl/1-0/\n"
+      },
+      "translations": {
+        "file": "./data/LICENSE-TRANSLATIONS.txt",
+        "text": "Project Tag/Trait Translation License\n\nThe Chinese and Japanese translations of VNDB Tag/Trait names and descriptions authored by this project are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0) when used separately from the generated VNDB-derived database.\n\nLicense text:\nhttps://creativecommons.org/licenses/by/4.0/\n\nAttribution suggestion:\nVNDB Profile Search contributors\n\nSensitive content disclaimer:\nThese translation entries are provided only for research, learning, indexing, and interoperability with VNDB-derived data. VNDB Tag/Trait data may include adult, sexual, violent, disturbing, controversial, or otherwise legally restricted subject matter. Users are solely responsible for complying with all laws, platform rules, institutional policies, and local restrictions that may apply to downloading, storing, transmitting, publishing, or using such sensitive information. The maintainers do not represent, promote, endorse, normalize, or approve any specific viewpoint, conduct, fetish, depiction, political position, or value judgment reflected in the original data or in translated labels/descriptions. The translations are provided as metadata and should not be interpreted as advocacy, recommendation, or approval of the underlying content.\n\nThis license applies only to translation text authored by this project. VNDB identifiers, original Tag/Trait names, original descriptions, category metadata, hierarchy information, VN/character relationships, ratings, votes, and other source data from VNDB remain subject to VNDB's database licensing terms.\n"
+      },
+      "ccBy40": {
+        "file": "./data/LICENSE-CC-BY-4.0.txt",
+        "text": "Creative Commons Attribution 4.0 International\n\nThe project-authored Chinese and Japanese Tag/Trait translation text is licensed under CC BY 4.0 when used separately from the generated VNDB-derived database.\n\nOfficial license text:\nhttps://creativecommons.org/licenses/by/4.0/legalcode\n\nHuman-readable summary:\nhttps://creativecommons.org/licenses/by/4.0/\n"
+      }
+    }
+  },
   "stats": {
     "vns": 62122,
     "characters": 163045,

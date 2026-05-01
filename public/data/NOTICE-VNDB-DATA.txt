@@ -1,0 +1,24 @@
+VNDB Derived Data Notice
+
+This directory contains generated data files used by VNDB Profile Search.
+
+The generated search index, including VN/character metadata, Tag/Trait metadata, Tag/Trait descriptions, relationships, ratings, votes, and derived search indexes, is based on VNDB.org database dumps.
+
+Source database:
+https://vndb.org/d14
+
+The VNDB database dump is made available under the Open Database License 1.0:
+https://opendatacommons.org/licenses/odbl/1-0/
+
+Database contents are made available under the Database Contents License 1.0:
+https://opendatacommons.org/licenses/dbcl/1-0/
+
+This generated search index is distributed as a derived database under ODbL 1.0 where applicable. Database contents are available under DbCL 1.0 except for data categories that VNDB's dump documentation identifies as having separate license conditions.
+
+This project does not include VN descriptions from db/vn.desc or character descriptions from db/chars.desc in the generated local index. Such descriptions, as well as images and other external details, may be requested from VNDB at runtime and remain subject to VNDB's terms and their respective rights holders.
+
+Chinese and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump. When these translations are included in the generated VNDB-derived search index, the generated index as a whole is provided under ODbL 1.0 where applicable.
+
+The translation text authored by this project may also be used separately under the license described in LICENSE-TRANSLATIONS.txt.
+
+VNDB and its data are not owned by this project.

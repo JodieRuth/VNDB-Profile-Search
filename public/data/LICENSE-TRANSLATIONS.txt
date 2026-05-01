@@ -1,0 +1,14 @@
+Project Tag/Trait Translation License
+
+The Chinese and Japanese translations of VNDB Tag/Trait names and descriptions authored by this project are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0) when used separately from the generated VNDB-derived database.
+
+License text:
+https://creativecommons.org/licenses/by/4.0/
+
+Attribution suggestion:
+VNDB Profile Search contributors
+
+Sensitive content disclaimer:
+These translation entries are provided only for research, learning, indexing, and interoperability with VNDB-derived data. VNDB Tag/Trait data may include adult, sexual, violent, disturbing, controversial, or otherwise legally restricted subject matter. Users are solely responsible for complying with all laws, platform rules, institutional policies, and local restrictions that may apply to downloading, storing, transmitting, publishing, or using such sensitive information. The maintainers do not represent, promote, endorse, normalize, or approve any specific viewpoint, conduct, fetish, depiction, political position, or value judgment reflected in the original data or in translated labels/descriptions. The translations are provided as metadata and should not be interpreted as advocacy, recommendation, or approval of the underlying content.
+
+This license applies only to translation text authored by this project. VNDB identifiers, original Tag/Trait names, original descriptions, category metadata, hierarchy information, VN/character relationships, ratings, votes, and other source data from VNDB remain subject to VNDB's database licensing terms.
