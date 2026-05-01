@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-05-01T07:43:30.179Z",
-  "buildDateUtc8": "2026-05-01 15:43:30",
-  "dataPath": "./data/vndb-prototype.d655f20e721891d8.json.gz",
-  "sha256": "d655f20e721891d85eeb1ffdf6b69c8f1ed355398972476971c354c1314e989b",
-  "size": 56361228,
+  "generatedAt": "2026-05-01T07:50:53.620Z",
+  "buildDateUtc8": "2026-05-01 15:50:53",
+  "dataPath": "https://raw.githubusercontent.com/JodieRuth/VNDB-Profile-Search/data-latest/public/data/vndb-prototype.57f8b5545131bb72.json.gz",
+  "sha256": "57f8b5545131bb72295e5ea17ada4a0161c4a7ab289128add44f1eb2770c287f",
+  "size": 56361226,
   "source": {
     "name": "VNDB.org database dump",
     "url": "https://vndb.org/d14"
