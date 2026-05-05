@@ -157,8 +157,14 @@ type PersistedState = {
   localSearchPage: number;
   priorityTagIds: number[];
   priorityTraitIds: number[];
+  negativePriorityTagIds: number[];
+  negativePriorityTraitIds: number[];
   tagSearchTagIds: number[];
   tagSearchTraitIds: number[];
+  excludedTagSearchTagIds: number[];
+  excludedTagSearchTraitIds: number[];
+  negativeSelectedVnIds: number[];
+  negativeSelectedCharacterIds: number[];
 };
 type MetaSelectorPersistedState = { query: string; openNodeIds: number[]; openGroupLabels: string[]; scrollTop: number; height: number };
 
@@ -312,7 +318,23 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     metaCategoryContentTooltip: '作品内容相关标签，用于描述题材、设定、剧情元素与表现形式。',
     metaCategoryR18Tooltip: 'R18 相关标签。默认仅用于展示，不参与搜索；只有被选为重点标签时才参与搜索。',
     metaCategoryTechnicalTooltip: '技术性标签。默认仅展示，不参与搜索；只有被选为重点标签时才参与搜索。',
-    metaCategoryOtherTooltip: '其他未归入主要分类的标签。'
+    metaCategoryOtherTooltip: '其他未归入主要分类的标签。',
+    addPositiveSample: '加入正向参考',
+    addNegativeSample: '加入反向参考',
+    negativeSamples: '反向参考条目',
+    weight: '权重',
+    weightOccupy: '占用权重',
+    weightHelp: '默认1.0不变；调高/调低将乘入参考向量',
+    excludedMeta: '已排除',
+    negativePriority: '反向重点',
+    addPositivePriority: '正向重点',
+    addNegativePriority: '反向重点',
+    normalTags: '普通',
+    spoiler1Tags: '剧透1',
+    spoiler2Tags: '剧透2',
+    characterTags: 'Character',
+    sceneTags: 'Scene',
+    negativeProfile: '反向合成画像（向量相减）',
   },
   ja: {
     source: 'VNDB データソースに基づく',
@@ -448,7 +470,23 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     metaCategoryContentTooltip: '作品内容に関するタグです。題材、設定、ストーリー要素、表現形式を表します。',
     metaCategoryR18Tooltip: 'R18 関連タグです。通常は表示のみで検索には使われず、重点タグとして選択した場合のみ検索に使われます。',
     metaCategoryTechnicalTooltip: '技術的なタグです。通常は表示のみで検索には使われず、重点タグとして選択した場合のみ検索に使われます。',
-    metaCategoryOtherTooltip: '主要カテゴリに分類されていないその他のタグです。'
+    metaCategoryOtherTooltip: '主要カテゴリに分類されていないその他のタグです。',
+    addPositiveSample: '正向参考に追加',
+    addNegativeSample: '反向参考に追加',
+    negativeSamples: '反向参考項目',
+    weight: '重み',
+    weightOccupy: '占用重み',
+    weightHelp: '既定1.0；上下で参考ベクトルに乗算',
+    excludedMeta: '除外済み',
+    negativePriority: '反向重点',
+    addPositivePriority: '正向重点',
+    addNegativePriority: '反向重点',
+    normalTags: '通常',
+    spoiler1Tags: 'ネタバレ1',
+    spoiler2Tags: 'ネタバレ2',
+    characterTags: 'Character',
+    sceneTags: 'Scene',
+    negativeProfile: '反向合成プロファイル（ベクトル減算）',
   },
   en: {
     source: 'Based on VNDB data source',
@@ -583,7 +621,23 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     metaCategoryContentTooltip: 'Content Tags describe themes, settings, story elements, and presentation style.',
     metaCategoryR18Tooltip: 'R18 Tags are shown by default but do not participate in search unless selected as priority Tags.',
     metaCategoryTechnicalTooltip: 'Technical Tags are shown by default but do not participate in search unless selected as priority Tags.',
-    metaCategoryOtherTooltip: 'Other Tags that are not grouped into the main categories.'
+    metaCategoryOtherTooltip: 'Other Tags that are not grouped into the main categories.',
+    addPositiveSample: 'Add positive ref',
+    addNegativeSample: 'Add negative ref',
+    negativeSamples: 'Negative references',
+    weight: 'Weight',
+    weightOccupy: 'Weight used',
+    weightHelp: 'Default 1.0; higher/lower multiplies reference vector',
+    excludedMeta: 'Excluded',
+    negativePriority: 'Negative priority',
+    addPositivePriority: 'Positive priority',
+    addNegativePriority: 'Negative priority',
+    normalTags: 'Normal',
+    spoiler1Tags: 'Spoiler L1',
+    spoiler2Tags: 'Spoiler L2',
+    characterTags: 'Character',
+    sceneTags: 'Scene',
+    negativeProfile: 'Negative profile (vector subtraction)',
   }
 };
 
@@ -687,8 +741,14 @@ function loadPersistedState() {
       localSearchPage: numberValue(value.localSearchPage, 1, 1),
       priorityTagIds: numberArray(value.priorityTagIds),
       priorityTraitIds: numberArray(value.priorityTraitIds),
+      negativePriorityTagIds: numberArray(value.negativePriorityTagIds),
+      negativePriorityTraitIds: numberArray(value.negativePriorityTraitIds),
       tagSearchTagIds: numberArray(value.tagSearchTagIds),
-      tagSearchTraitIds: numberArray(value.tagSearchTraitIds)
+      tagSearchTraitIds: numberArray(value.tagSearchTraitIds),
+      excludedTagSearchTagIds: numberArray(value.excludedTagSearchTagIds),
+      excludedTagSearchTraitIds: numberArray(value.excludedTagSearchTraitIds),
+      negativeSelectedVnIds: numberArray(value.negativeSelectedVnIds),
+      negativeSelectedCharacterIds: numberArray(value.negativeSelectedCharacterIds)
     } satisfies PersistedState;
   } catch {
     return null;
@@ -1013,6 +1073,34 @@ function mergeVectors(vectors: Map<number, number>[]) {
   }
   for (const [id, value] of merged) merged.set(id, value / vectors.length);
   return merged;
+}
+
+function weightedVector(vector: Map<number, number>, weight: number) {
+  const weighted = new Map<number, number>();
+  for (const [id, value] of vector) {
+    const nextValue = value * weight;
+    if (nextValue > 0) weighted.set(id, nextValue);
+  }
+  return weighted;
+}
+
+function subtractVectors(positive: Map<number, number>, negative: Map<number, number>) {
+  const result = new Map(positive);
+  for (const [id, value] of negative) {
+    const nextValue = (result.get(id) ?? 0) - value;
+    if (nextValue > 0) result.set(id, nextValue);
+    else result.delete(id);
+  }
+  return result;
+}
+
+function adjustedProfileVector(positiveVectors: Map<number, number>[], negativeVectors: Map<number, number>[], negativePriorityIds: Set<number>) {
+  if (!positiveVectors.length) return new Map<number, number>();
+  const positive = mergeVectors(positiveVectors);
+  const negative = negativeVectors.length ? mergeVectors(negativeVectors) : new Map<number, number>();
+  const adjusted = negative.size ? subtractVectors(positive, negative) : positive;
+  for (const id of negativePriorityIds) adjusted.delete(id);
+  return adjusted;
 }
 
 function mergeSpoilers(itemGroups: Array<Pair[] | TraitPair[]>, kind: 'tag' | 'trait', meta: Map<number, Meta>, includeSexual: boolean, includeSpoiler: boolean) {
@@ -1453,14 +1541,6 @@ function roleAllowed(role: string, filter: CharacterRoleFilter) {
   return filter.appears;
 }
 
-function characterRoleText(role: string, t: Record<string, string>) {
-  if (role === 'primary') return t.primary;
-  if (role === 'main') return t.main;
-  if (role === 'side') return t.side;
-  if (role === 'appears') return t.appears;
-  return role;
-}
-
 function characterHasQualifiedVn(character: Character, vns: Map<number, Vn>, minVotes: number, roleFilter?: CharacterRoleFilter) {
   return character.vns.some(([id, role]) => (vns.get(id)?.votes ?? 0) >= minVotes && (!roleFilter || roleAllowed(role, roleFilter)));
 }
@@ -1490,6 +1570,12 @@ function characterDisplayScore(character: Character, vns: Map<number, Vn>, prefe
   if (!preferAverage) return character.score;
   return characterAverageScore(character, vns) * 10 + character.score / 100;
 }
+
+function metaDisplayWeight(value: number) {
+  return Number.isFinite(value) ? value.toFixed(2) : '0.00';
+}
+
+
 
 function cosine(a: Map<number, number>, b: Map<number, number>) {
   let dot = 0;
@@ -1733,6 +1819,17 @@ function App() {
   const [priorityTraits, setPriorityTraits] = useState<Set<number>>(() => new Set(persistedState?.priorityTraitIds ?? []));
   const [tagSearchTags, setTagSearchTags] = useState<Set<number>>(() => new Set(persistedState?.tagSearchTagIds ?? []));
   const [tagSearchTraits, setTagSearchTraits] = useState<Set<number>>(() => new Set(persistedState?.tagSearchTraitIds ?? []));
+  const [negativeSelectedVns, setNegativeSelectedVns] = useState<Vn[]>([]);
+  const [negativeSelectedCharacters, setNegativeSelectedCharacters] = useState<Character[]>([]);
+  const [sampleWeights, setSampleWeights] = useState<Map<string, number>>(new Map());
+  const [negativeSampleWeights, setNegativeSampleWeights] = useState<Map<string, number>>(new Map());
+  const [negativePriorityTags, setNegativePriorityTags] = useState<Set<number>>(() => new Set(persistedState?.negativePriorityTagIds ?? []));
+  const [negativePriorityTraits, setNegativePriorityTraits] = useState<Set<number>>(() => new Set(persistedState?.negativePriorityTraitIds ?? []));
+  const [excludedTagSearchTags, setExcludedTagSearchTags] = useState<Set<number>>(() => new Set(persistedState?.excludedTagSearchTagIds ?? []));
+  const [excludedTagSearchTraits, setExcludedTagSearchTraits] = useState<Set<number>>(() => new Set(persistedState?.excludedTagSearchTraitIds ?? []));
+  const [addRefPopover, setAddRefPopover] = useState<{ item: Vn | Character; x: number; y: number } | null>(null);
+  const [priorityPopover, setPriorityPopover] = useState<{ kind: 'tag' | 'trait' | 'profile'; id: number; x: number; y: number } | null>(null);
+  const [metaSearchPopover, setMetaSearchPopover] = useState<{ kind: 'tag' | 'trait'; id: number; x: number; y: number } | null>(null);
   const [persistenceReady, setPersistenceReady] = useState(!persistedState);
   const [deferredDataWorkReady, setDeferredDataWorkReady] = useState(!persistedState);
   const detailQueueRef = useRef<QueuedDetailRequest[]>([]);
@@ -1746,6 +1843,7 @@ function App() {
   const localSearchPanelRef = useRef<HTMLDivElement | null>(null);
   const sampleProfilePanelRef = useRef<HTMLDivElement | null>(null);
   const localSearchListRef = useRef<HTMLDivElement | null>(null);
+  const sampleProfileListRef = useRef<HTMLDivElement | null>(null);
   const recommendationListRef = useRef<HTMLDivElement | null>(null);
   const persistedSelectionsRestoredRef = useRef(!persistedState);
   const recommendationResetReadyRef = useRef(false);
@@ -1755,6 +1853,8 @@ function App() {
   const [workerComputing, setWorkerComputing] = useState(false);
   const [workerProgress, setWorkerProgress] = useState<WorkerProgressState | null>(null);
   const [workerResult, setWorkerResult] = useState<WorkerResult>(() => emptyWorkerResult());
+  const [localSearchListHeight, setLocalSearchListHeight] = useState(560);
+  const [sampleProfileListHeight, setSampleProfileListHeight] = useState(420);
   const renderShowSexual = useDeferredValue(showSexual);
   const renderShowSpoiler = useDeferredValue(showSpoiler);
   const renderShowBlockedTags = useDeferredValue(showBlockedTags);
@@ -1898,6 +1998,23 @@ function App() {
   }, [selectedVns, selectedCharacters, vnDetails, characterDetails]);
 
   useEffect(() => {
+    if (!persistedSelectionsRestoredRef.current) return;
+    if (!negativeSelectedVns.length && !negativeSelectedCharacters.length) return;
+    for (const vn of negativeSelectedVns) {
+      const key = `vn${vn.id}`;
+      if (requestedSampleDetailsRef.current.has(key) || vnDetails[vn.id]) continue;
+      requestedSampleDetailsRef.current.add(key);
+      requestVnDetail(vn.id, 'sample');
+    }
+    for (const character of negativeSelectedCharacters) {
+      const key = `cn${character.id}`;
+      if (requestedSampleDetailsRef.current.has(key) || characterDetails[character.id]) continue;
+      requestedSampleDetailsRef.current.add(key);
+      requestCharacterDetail(character.id, 'sample');
+    }
+  }, [negativeSelectedVns, negativeSelectedCharacters, vnDetails, characterDetails]);
+
+  useEffect(() => {
     if (!data || !persistenceReady) return;
     const handle = window.setTimeout(() => {
       const state: PersistedState = {
@@ -1928,8 +2045,14 @@ function App() {
         localSearchPage,
         priorityTagIds: [...priorityTags],
         priorityTraitIds: [...priorityTraits],
+        negativePriorityTagIds: [...negativePriorityTags],
+        negativePriorityTraitIds: [...negativePriorityTraits],
         tagSearchTagIds: [...tagSearchTags],
-        tagSearchTraitIds: [...tagSearchTraits]
+        tagSearchTraitIds: [...tagSearchTraits],
+        excludedTagSearchTagIds: [...excludedTagSearchTags],
+        excludedTagSearchTraitIds: [...excludedTagSearchTraits],
+        negativeSelectedVnIds: negativeSelectedVns.map((vn) => vn.id),
+        negativeSelectedCharacterIds: negativeSelectedCharacters.map((character) => character.id)
       };
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -1938,7 +2061,7 @@ function App() {
       }
     }, 120);
     return () => window.clearTimeout(handle);
-  }, [data, persistenceReady, mode, vnQuery, characterQuery, vnSubmittedQuery, characterSubmittedQuery, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, resultSort, sortDirection, darkMode, resultPage, localSearchPage, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
+  }, [data, persistenceReady, mode, vnQuery, characterQuery, vnSubmittedQuery, characterSubmittedQuery, selectedVns, selectedCharacters, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, resultSort, sortDirection, darkMode, resultPage, localSearchPage, priorityTags, priorityTraits, negativePriorityTags, negativePriorityTraits, tagSearchTags, tagSearchTraits, excludedTagSearchTags, excludedTagSearchTraits, negativeSelectedVns, negativeSelectedCharacters]);
 
   useEffect(() => {
     if (!persistedSelectionsRestoredRef.current) return;
@@ -1951,7 +2074,7 @@ function App() {
     setShowRecommendations(false);
     setRecommendationDetails({});
     setResultPage(1);
-  }, [mode, selectedVns, selectedCharacters, renderShowBlockedTags, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, priorityTags, priorityTraits, tagSearchTags, tagSearchTraits]);
+  }, [mode, selectedVns, selectedCharacters, negativeSelectedVns, negativeSelectedCharacters, renderShowBlockedTags, minVotes, tagLimit, traitLimit, profileSampleRounds, preferCharacterAverage, tagRoleFilter, priorityTags, priorityTraits, negativePriorityTags, negativePriorityTraits, tagSearchTags, tagSearchTraits, excludedTagSearchTags, excludedTagSearchTraits]);
 
   useEffect(() => {
     if (!recommendationResetReadyRef.current) return;
@@ -1969,8 +2092,8 @@ function App() {
 
   const tagMeta = useMemo(() => new Map(data?.tags.map((tag) => [tag.id, tag]) ?? []), [data]);
   const traitMeta = useMemo(() => new Map(data?.traits.map((trait) => [trait.id, trait]) ?? []), [data]);
-  const profileSexualTagIds = useMemo(() => new Set<number>(), []);
-  const profileSexualTraitIds = useMemo(() => new Set<number>(), []);
+  const profileSexualTagIds = useMemo(() => new Set((data?.tags ?? []).filter((tag) => tag.sexual).map((tag) => tag.id)), [data]);
+  const profileSexualTraitIds = useMemo(() => new Set((data?.traits ?? []).filter((trait) => trait.sexual).map((trait) => trait.id)), [data]);
   const vnById = useMemo(() => new Map(data?.vns.map((vn) => [vn.id, vn]) ?? []), [data]);
   const characterById = useMemo(() => new Map(data?.characters.map((character) => [character.id, character]) ?? []), [data]);
 
@@ -1978,8 +2101,12 @@ function App() {
     if (!data || !persistedState || persistedSelectionsRestoredRef.current) return;
     const nextSelectedVns = persistedState.selectedVnIds.map((id) => vnById.get(id)).filter((vn): vn is Vn => Boolean(vn));
     const nextSelectedCharacters = persistedState.selectedCharacterIds.map((id) => characterById.get(id)).filter((character): character is Character => Boolean(character));
+    const nextNegativeSelectedVns = (persistedState.negativeSelectedVnIds ?? []).map((id) => vnById.get(id)).filter((vn): vn is Vn => Boolean(vn));
+    const nextNegativeSelectedCharacters = (persistedState.negativeSelectedCharacterIds ?? []).map((id) => characterById.get(id)).filter((character): character is Character => Boolean(character));
     setSelectedVns(nextSelectedVns);
     setSelectedCharacters(nextSelectedCharacters);
+    setNegativeSelectedVns(nextNegativeSelectedVns);
+    setNegativeSelectedCharacters(nextNegativeSelectedCharacters);
     persistedSelectionsRestoredRef.current = true;
     setPersistenceReady(true);
   }, [data, persistedState, vnById, characterById]);
@@ -2053,34 +2180,42 @@ function App() {
 
   const vnProfileSpoilerOff = useMemo(() => {
     if (!deferredSelectedVns.length) return new Map<number, number>();
-    return mergeVectors(deferredSelectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', false, false, profileSexualTagIds)));
-  }, [deferredSelectedVns, tagMeta, profileSexualTagIds]);
+    const positiveVectors = deferredSelectedVns.map((vn) => weightedVector(makeVector(vn.tags, tagMeta, 'tag', false, false, profileSexualTagIds), sampleWeights.get(`v${vn.id}`) ?? 1.0));
+    const negativeVectors = negativeSelectedVns.map((vn) => weightedVector(makeVector(vn.tags, tagMeta, 'tag', false, false, profileSexualTagIds), (negativeSampleWeights.get(`v${vn.id}`) ?? 1.0) * 0.5));
+    return adjustedProfileVector(positiveVectors, negativeVectors, negativePriorityTags);
+  }, [deferredSelectedVns, negativeSelectedVns, tagMeta, profileSexualTagIds, sampleWeights, negativeSampleWeights, negativePriorityTags]);
 
   const vnProfileSpoilerOn = useMemo(() => {
     if (!deferredSelectedVns.length) return new Map<number, number>();
-    return mergeVectors(deferredSelectedVns.map((vn) => makeVector(vn.tags, tagMeta, 'tag', true, false, profileSexualTagIds)));
-  }, [deferredSelectedVns, tagMeta, profileSexualTagIds]);
+    const positiveVectors = deferredSelectedVns.map((vn) => weightedVector(makeVector(vn.tags, tagMeta, 'tag', true, false, profileSexualTagIds), sampleWeights.get(`v${vn.id}`) ?? 1.0));
+    const negativeVectors = negativeSelectedVns.map((vn) => weightedVector(makeVector(vn.tags, tagMeta, 'tag', true, false, profileSexualTagIds), (negativeSampleWeights.get(`v${vn.id}`) ?? 1.0) * 0.5));
+    return adjustedProfileVector(positiveVectors, negativeVectors, negativePriorityTags);
+  }, [deferredSelectedVns, negativeSelectedVns, tagMeta, profileSexualTagIds, sampleWeights, negativeSampleWeights, negativePriorityTags]);
 
   const vnProfile = renderShowSpoiler ? vnProfileSpoilerOn : vnProfileSpoilerOff;
 
-  const vnProfileSpoilers = useMemo(() => mergeSpoilers(deferredSelectedVns.map((vn) => vn.tags), 'tag', tagMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedVns, tagMeta, renderShowSexual, renderShowSpoiler]);
+  const vnProfileSpoilers = useMemo(() => mergeSpoilers([...deferredSelectedVns.map((vn) => vn.tags), ...negativeSelectedVns.map((vn) => vn.tags)], 'tag', tagMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedVns, negativeSelectedVns, tagMeta, renderShowSexual, renderShowSpoiler]);
 
   const characterProfileSpoilerOff = useMemo(() => {
     if (!deferredSelectedCharacters.length) return new Map<number, number>();
-    return mergeVectors(deferredSelectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', false, false, profileSexualTraitIds)));
-  }, [deferredSelectedCharacters, traitMeta, profileSexualTraitIds]);
+    const positiveVectors = deferredSelectedCharacters.map((character) => weightedVector(makeVector(character.traits, traitMeta, 'trait', false, false, profileSexualTraitIds), sampleWeights.get(`c${character.id}`) ?? 1.0));
+    const negativeVectors = negativeSelectedCharacters.map((character) => weightedVector(makeVector(character.traits, traitMeta, 'trait', false, false, profileSexualTraitIds), (negativeSampleWeights.get(`c${character.id}`) ?? 1.0) * 0.5));
+    return adjustedProfileVector(positiveVectors, negativeVectors, negativePriorityTraits);
+  }, [deferredSelectedCharacters, negativeSelectedCharacters, traitMeta, profileSexualTraitIds, sampleWeights, negativeSampleWeights, negativePriorityTraits]);
 
   const characterProfileSpoilerOn = useMemo(() => {
     if (!deferredSelectedCharacters.length) return new Map<number, number>();
-    return mergeVectors(deferredSelectedCharacters.map((character) => makeVector(character.traits, traitMeta, 'trait', true, false, profileSexualTraitIds)));
-  }, [deferredSelectedCharacters, traitMeta, profileSexualTraitIds]);
+    const positiveVectors = deferredSelectedCharacters.map((character) => weightedVector(makeVector(character.traits, traitMeta, 'trait', true, false, profileSexualTraitIds), sampleWeights.get(`c${character.id}`) ?? 1.0));
+    const negativeVectors = negativeSelectedCharacters.map((character) => weightedVector(makeVector(character.traits, traitMeta, 'trait', true, false, profileSexualTraitIds), (negativeSampleWeights.get(`c${character.id}`) ?? 1.0) * 0.5));
+    return adjustedProfileVector(positiveVectors, negativeVectors, negativePriorityTraits);
+  }, [deferredSelectedCharacters, negativeSelectedCharacters, traitMeta, profileSexualTraitIds, sampleWeights, negativeSampleWeights, negativePriorityTraits]);
 
   const characterProfile = renderShowSpoiler ? characterProfileSpoilerOn : characterProfileSpoilerOff;
 
-  const characterProfileSpoilers = useMemo(() => mergeSpoilers(deferredSelectedCharacters.map((character) => character.traits), 'trait', traitMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedCharacters, traitMeta, renderShowSexual, renderShowSpoiler]);
+  const characterProfileSpoilers = useMemo(() => mergeSpoilers([...deferredSelectedCharacters.map((character) => character.traits), ...negativeSelectedCharacters.map((character) => character.traits)], 'trait', traitMeta, renderShowSexual, renderShowSpoiler), [deferredSelectedCharacters, negativeSelectedCharacters, traitMeta, renderShowSexual, renderShowSpoiler]);
 
-  const activePriorityTags = useMemo(() => new Set([...priorityTags].filter((id) => vnProfileSpoilerOn.has(id) || vnProfileSpoilerOff.has(id))), [priorityTags, vnProfileSpoilerOn, vnProfileSpoilerOff]);
-  const activePriorityTraits = useMemo(() => new Set([...priorityTraits].filter((id) => characterProfileSpoilerOn.has(id) || characterProfileSpoilerOff.has(id))), [priorityTraits, characterProfileSpoilerOn, characterProfileSpoilerOff]);
+  const activePriorityTags = useMemo(() => new Set([...priorityTags, ...negativePriorityTags].filter((id) => vnProfileSpoilerOn.has(id) || vnProfileSpoilerOff.has(id))), [priorityTags, negativePriorityTags, vnProfileSpoilerOn, vnProfileSpoilerOff]);
+  const activePriorityTraits = useMemo(() => new Set([...priorityTraits, ...negativePriorityTraits].filter((id) => characterProfileSpoilerOn.has(id) || characterProfileSpoilerOff.has(id))), [priorityTraits, negativePriorityTraits, characterProfileSpoilerOn, characterProfileSpoilerOff]);
   const tagSearchTagGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('tag', tagSearchTags, data.tags, tagMeta, true, false, false, false) : [], [data, tagSearchTags, tagMeta]);
   const tagSearchTagGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups('tag', tagSearchTags, data.tags, tagMeta, true, true, false, false) : [], [data, tagSearchTags, tagMeta]);
   const tagSearchTraitGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('trait', tagSearchTraits, data.traits, traitMeta, true, false) : [], [data, tagSearchTraits, traitMeta]);
@@ -2091,6 +2226,14 @@ function App() {
   const tagSearchSexualTagIdsSpoilerOn = useMemo(() => selectedSexualAlternativeIds(tagSearchTagGroupsSpoilerOn, tagMeta), [tagSearchTagGroupsSpoilerOn, tagMeta]);
   const tagSearchSexualTraitIdsSpoilerOff = useMemo(() => selectedSexualAlternativeIds(tagSearchTraitGroupsSpoilerOff, traitMeta), [tagSearchTraitGroupsSpoilerOff, traitMeta]);
   const tagSearchSexualTraitIdsSpoilerOn = useMemo(() => selectedSexualAlternativeIds(tagSearchTraitGroupsSpoilerOn, traitMeta), [tagSearchTraitGroupsSpoilerOn, traitMeta]);
+  const excludedTagSearchTagGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('tag', excludedTagSearchTags, data.tags, tagMeta, true, false, true, true) : [], [data, excludedTagSearchTags, tagMeta]);
+  const excludedTagSearchTagGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups('tag', excludedTagSearchTags, data.tags, tagMeta, true, true, true, true) : [], [data, excludedTagSearchTags, tagMeta]);
+  const excludedTagSearchTraitGroupsSpoilerOff = useMemo(() => data ? metaSearchGroups('trait', excludedTagSearchTraits, data.traits, traitMeta, true, false) : [], [data, excludedTagSearchTraits, traitMeta]);
+  const excludedTagSearchTraitGroupsSpoilerOn = useMemo(() => data ? metaSearchGroups('trait', excludedTagSearchTraits, data.traits, traitMeta, true, true) : [], [data, excludedTagSearchTraits, traitMeta]);
+  const excludedTagSearchExpandedTagsSpoilerOff = useMemo(() => new Set(excludedTagSearchTagGroupsSpoilerOff.flatMap((group) => [...group.alternatives])), [excludedTagSearchTagGroupsSpoilerOff]);
+  const excludedTagSearchExpandedTagsSpoilerOn = useMemo(() => new Set(excludedTagSearchTagGroupsSpoilerOn.flatMap((group) => [...group.alternatives])), [excludedTagSearchTagGroupsSpoilerOn]);
+  const excludedTagSearchExpandedTraitsSpoilerOff = useMemo(() => new Set(excludedTagSearchTraitGroupsSpoilerOff.flatMap((group) => [...group.alternatives])), [excludedTagSearchTraitGroupsSpoilerOff]);
+  const excludedTagSearchExpandedTraitsSpoilerOn = useMemo(() => new Set(excludedTagSearchTraitGroupsSpoilerOn.flatMap((group) => [...group.alternatives])), [excludedTagSearchTraitGroupsSpoilerOn]);
 
   useEffect(() => {
     if (!data || !deferredDataWorkReady || !recommendationWorkerRef.current) return;
@@ -2128,14 +2271,22 @@ function App() {
       params: {
         selectedVnIds: mode === 'vn' ? deferredSelectedVns.map((vn) => vn.id) : [],
         selectedCharacterIds: mode === 'character' ? deferredSelectedCharacters.map((character) => character.id) : [],
+        negativeSelectedVnIds: mode === 'vn' ? negativeSelectedVns.map((vn) => vn.id) : [],
+        negativeSelectedCharacterIds: mode === 'character' ? negativeSelectedCharacters.map((character) => character.id) : [],
+        sampleWeights: mode === 'vn' ? deferredSelectedVns.map((vn) => sampleWeights.get(`v${vn.id}`) ?? 1.0) : deferredSelectedCharacters.map((character) => sampleWeights.get(`c${character.id}`) ?? 1.0),
+        negativeSampleWeights: mode === 'vn' ? negativeSelectedVns.map((vn) => negativeSampleWeights.get(`v${vn.id}`) ?? 1.0) : negativeSelectedCharacters.map((character) => negativeSampleWeights.get(`c${character.id}`) ?? 1.0),
         activePriorityTags: mode === 'vn' ? [...activePriorityTags] : [],
         activePriorityTraits: mode === 'character' ? [...activePriorityTraits] : [],
+        negativePriorityTagIds: mode === 'vn' ? [...negativePriorityTags] : [],
+        negativePriorityTraitIds: mode === 'character' ? [...negativePriorityTraits] : [],
         tagLimit,
         traitLimit,
         profileSampleRounds,
         includeSpoiler: renderShowSpoiler,
         tagSearchTags: [...tagSearchTags],
         tagSearchTraits: [...tagSearchTraits],
+        excludedTagSearchTags: [...(renderShowSpoiler ? excludedTagSearchExpandedTagsSpoilerOn : excludedTagSearchExpandedTagsSpoilerOff)],
+        excludedTagSearchTraits: [...(renderShowSpoiler ? excludedTagSearchExpandedTraitsSpoilerOn : excludedTagSearchExpandedTraitsSpoilerOff)],
         tagSearchTagGroupsSpoilerOff: tagSearchTagGroupsSpoilerOff.map((group) => ({ selectedId: group.selectedId, alternatives: [...group.alternatives] })),
         tagSearchTagGroupsSpoilerOn: tagSearchTagGroupsSpoilerOn.map((group) => ({ selectedId: group.selectedId, alternatives: [...group.alternatives] })),
         tagSearchTraitGroupsSpoilerOff: tagSearchTraitGroupsSpoilerOff.map((group) => ({ selectedId: group.selectedId, alternatives: [...group.alternatives] })),
@@ -2151,7 +2302,7 @@ function App() {
         sortDirection
       }
     });
-  }, [data, persistenceReady, workerReady, mode, deferredSelectedVns, deferredSelectedCharacters, activePriorityTags, activePriorityTraits, tagLimit, traitLimit, profileSampleRounds, renderShowSpoiler, tagSearchTags, tagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
+  }, [data, persistenceReady, workerReady, mode, deferredSelectedVns, deferredSelectedCharacters, negativeSelectedVns, negativeSelectedCharacters, sampleWeights, negativeSampleWeights, activePriorityTags, activePriorityTraits, negativePriorityTags, negativePriorityTraits, tagLimit, traitLimit, profileSampleRounds, renderShowSpoiler, tagSearchTags, tagSearchTraits, excludedTagSearchTags, excludedTagSearchTraits, excludedTagSearchExpandedTagsSpoilerOff, excludedTagSearchExpandedTagsSpoilerOn, excludedTagSearchExpandedTraitsSpoilerOff, excludedTagSearchExpandedTraitsSpoilerOn, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
 
   useEffect(() => {
     recommendationRequestIdRef.current += 1;
@@ -2159,7 +2310,7 @@ function App() {
     setWorkerProgress(null);
     setWorkerResult(emptyWorkerResult());
     setShowRecommendations(false);
-  }, [mode, deferredSelectedVns, deferredSelectedCharacters, activePriorityTags, activePriorityTraits, tagLimit, traitLimit, profileSampleRounds, tagSearchTags, tagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
+  }, [mode, deferredSelectedVns, deferredSelectedCharacters, negativeSelectedVns, negativeSelectedCharacters, activePriorityTags, activePriorityTraits, negativePriorityTags, negativePriorityTraits, tagLimit, traitLimit, profileSampleRounds, tagSearchTags, tagSearchTraits, excludedTagSearchTags, excludedTagSearchTraits, tagSearchTagGroupsSpoilerOff, tagSearchTagGroupsSpoilerOn, tagSearchTraitGroupsSpoilerOff, tagSearchTraitGroupsSpoilerOn, tagSearchSexualTagIdsSpoilerOff, tagSearchSexualTagIdsSpoilerOn, tagSearchSexualTraitIdsSpoilerOff, tagSearchSexualTraitIdsSpoilerOn, minVotes, tagRoleFilter, preferCharacterAverage, resultSort, sortDirection]);
 
   const activeWorkerResult = renderShowSpoiler ? workerResult.spoilerOn : workerResult.spoilerOff;
 
@@ -2288,24 +2439,84 @@ function App() {
     });
   };
 
-  const addSelection = (item: Vn | Character) => {
+  const addSelection = (item: Vn | Character, negative = false) => {
     if (mode === 'vn') {
       const vn = item as Vn;
-      setSelectedVns((list) => list.some((it) => it.id === vn.id) ? list : [...list, vn]);
+      if (negative) {
+        setNegativeSelectedVns((list) => list.some((it) => it.id === vn.id) ? list : [...list, vn]);
+      } else {
+        setSelectedVns((list) => list.some((it) => it.id === vn.id) ? list : [...list, vn]);
+      }
       requestVnDetail(vn.id, 'sample');
     } else {
       const character = item as Character;
-      setSelectedCharacters((list) => list.some((it) => it.id === character.id) ? list : [...list, character]);
+      if (negative) {
+        setNegativeSelectedCharacters((list) => list.some((it) => it.id === character.id) ? list : [...list, character]);
+      } else {
+        setSelectedCharacters((list) => list.some((it) => it.id === character.id) ? list : [...list, character]);
+      }
       requestCharacterDetail(character.id, 'sample');
+    }
+    setAddRefPopover(null);
+  };
+
+  const startResizablePanelList = (event: React.PointerEvent<HTMLButtonElement>, element: HTMLElement | null, height: number, setHeight: React.Dispatch<React.SetStateAction<number>>) => {
+    if (!element) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = element.getBoundingClientRect().height || height;
+    const pointerId = event.pointerId;
+    const target = event.currentTarget;
+    let nextHeight = startHeight;
+    let frame = 0;
+    target.setPointerCapture(pointerId);
+    const applyHeight = () => {
+      frame = 0;
+      element.style.height = `${nextHeight}px`;
+      element.style.maxHeight = `${nextHeight}px`;
+    };
+    const move = (moveEvent: PointerEvent) => {
+      nextHeight = Math.round(Math.min(1100, Math.max(160, startHeight + moveEvent.clientY - startY)));
+      if (!frame) frame = window.requestAnimationFrame(applyHeight);
+    };
+    const stop = () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      element.style.height = `${nextHeight}px`;
+      element.style.maxHeight = `${nextHeight}px`;
+      setHeight(nextHeight);
+      try {
+        target.releasePointerCapture(pointerId);
+      } catch {
+      }
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  };
+
+  const startResizeLocalSearch = (event: React.PointerEvent<HTMLButtonElement>) => startResizablePanelList(event, localSearchListRef.current, localSearchListHeight, setLocalSearchListHeight);
+  const startResizeSampleProfile = (event: React.PointerEvent<HTMLButtonElement>) => startResizablePanelList(event, sampleProfileListRef.current, sampleProfileListHeight, setSampleProfileListHeight);
+
+  const clearSelections = () => {
+    if (mode === 'vn') {
+      setSelectedVns([]);
+      setNegativeSelectedVns([]);
+    } else if (mode === 'character') {
+      setSelectedCharacters([]);
+      setNegativeSelectedCharacters([]);
     }
   };
 
-  const clearSelections = () => {
-    if (mode === 'vn') setSelectedVns([]);
-    else if (mode === 'character') setSelectedCharacters([]);
-  };
+  const hasSelectedSamples = mode === 'vn'
+    ? selectedVns.length > 0 || negativeSelectedVns.length > 0
+    : selectedCharacters.length > 0 || negativeSelectedCharacters.length > 0;
 
-  const hasSelectedSamples = mode === 'vn' ? selectedVns.length > 0 : selectedCharacters.length > 0;
+  const hasNegativeSamples = mode === 'vn'
+    ? negativeSelectedVns.length > 0
+    : negativeSelectedCharacters.length > 0;
 
   const sortedVnRecommendations = vnRecommendations;
   const sortedCharacterRecommendations = characterRecommendations;
@@ -2366,14 +2577,47 @@ function App() {
   const profileItems = mode === 'vn'
     ? [...vnProfile.entries()].filter(([id]) => {
       const meta = tagMeta.get(id);
-      return (renderShowBlockedTags || !meta?.blocked) && (renderShowTechnicalTags || !meta?.tech || priorityTags.has(id));
+      return Boolean(meta) && (renderShowSexual || !meta?.sexual) && (renderShowBlockedTags || !meta?.blocked) && (renderShowTechnicalTags || !meta?.tech || priorityTags.has(id));
     }).sort((a, b) => b[1] - a[1])
-    : [...characterProfile.entries()].sort((a, b) => b[1] - a[1]);
+    : [...characterProfile.entries()].filter(([id]) => {
+      const meta = traitMeta.get(id);
+      return Boolean(meta) && (renderShowSexual || !meta?.sexual);
+    }).sort((a, b) => b[1] - a[1]);
   const groupedProfileTraits = mode === 'character' ? profileTraitGroups(profileItems, traitMeta, renderShowSexual, metaLanguage, uiLanguage) : [];
 
-  const togglePriority = (id: number) => {
-    const setter = mode === 'vn' ? setPriorityTags : setPriorityTraits;
+  const toggleTagSearchMeta = (kind: 'tag' | 'trait', id: number, negative = false) => {
+    const targetSetter = negative ? (kind === 'tag' ? setExcludedTagSearchTags : setExcludedTagSearchTraits) : (kind === 'tag' ? setTagSearchTags : setTagSearchTraits);
+    const oppositeSetter = negative ? (kind === 'tag' ? setTagSearchTags : setTagSearchTraits) : (kind === 'tag' ? setExcludedTagSearchTags : setExcludedTagSearchTraits);
+    oppositeSetter((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    targetSetter((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePriority = (id: number, negative = false) => {
+    const setter = negative
+      ? (mode === 'vn' ? setNegativePriorityTags : setNegativePriorityTraits)
+      : (mode === 'vn' ? setPriorityTags : setPriorityTraits);
+    const oppositeSetter = negative
+      ? (mode === 'vn' ? setPriorityTags : setPriorityTraits)
+      : (mode === 'vn' ? setNegativePriorityTags : setNegativePriorityTraits);
     startTransition(() => {
+      oppositeSetter((current) => {
+        if (current.has(id)) {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        }
+        return current;
+      });
       setter((current) => {
         const next = new Set(current);
         if (next.has(id)) next.delete(id);
@@ -2456,7 +2700,7 @@ function App() {
         </div>
       </section>
 
-      {mode === 'tag' ? <TagSearchPanel tags={data.tags} traits={data.traits} tagMeta={tagMeta} traitMeta={traitMeta} tagUsageCounts={tagUsageCounts} traitUsageCounts={traitUsageCounts} selectedTags={tagSearchTags} selectedTraits={tagSearchTraits} setSelectedTags={setTagSearchTags} setSelectedTraits={setTagSearchTraits} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} /> : <section className="grid two">
+      {mode === 'tag' ? <TagSearchPanel tags={data.tags} traits={data.traits} tagMeta={tagMeta} traitMeta={traitMeta} tagUsageCounts={tagUsageCounts} traitUsageCounts={traitUsageCounts} selectedTags={tagSearchTags} selectedTraits={tagSearchTraits} setSelectedTags={setTagSearchTags} setSelectedTraits={setTagSearchTraits} excludedTags={excludedTagSearchTags} excludedTraits={excludedTagSearchTraits} setExcludedTags={setExcludedTagSearchTags} setExcludedTraits={setExcludedTagSearchTraits} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} onRequestMetaChoice={(kind, id, event) => { const target = event.target as HTMLElement; const rect = target.getBoundingClientRect(); const selectedSet = kind === 'tag' ? tagSearchTags : tagSearchTraits; const excludedSet = kind === 'tag' ? excludedTagSearchTags : excludedTagSearchTraits; if (selectedSet.has(id) || excludedSet.has(id)) { toggleTagSearchMeta(kind, id, excludedSet.has(id)); return; } setMetaSearchPopover({ kind, id, x: rect.left + rect.width / 2, y: rect.bottom }); }} /> : <section className="grid two">
           <div className="panel localSearchPanel" ref={localSearchPanelRef}>
           <h2>{t.localResults}</h2>
           <p className="resultMeta">{t.candidates}：{searchResults.length.toLocaleString()}，{t.currentPage} {currentLocalSearchPage} / {localSearchPageCount} {t.page}</p>
@@ -2464,51 +2708,62 @@ function App() {
             <button onClick={() => changeLocalSearchPage(currentLocalSearchPage - 1)} disabled={currentLocalSearchPage <= 1}>{isMobile ? t.previousItem : t.previous}</button>
             <button onClick={() => changeLocalSearchPage(currentLocalSearchPage + 1)} disabled={currentLocalSearchPage >= localSearchPageCount}>{isMobile ? t.nextItem : t.next}</button>
           </div>
-          <div ref={localSearchListRef} className={`list localSearchList ${isMobile ? 'mobileVnLocalList' : ''}`}>
+          <div ref={localSearchListRef} className={`list localSearchList ${isMobile ? 'mobileVnLocalList' : ''}`} style={{ maxHeight: `${localSearchListHeight}px` }}>
             {visibleSearchResults.map((item) => mode === 'vn'
-              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector((item as Vn).tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} onAdd={() => addSelection(item)} />
-              : <CharacterCard key={`ch-${(item as Character).id}`} character={item as Character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} onAdd={() => addSelection(item)} />)}
+              ? <VnCard key={`vn-${(item as Vn).id}`} vn={item as Vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector((item as Vn).tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} onAdd={(event) => setAddRefPopover({ item: item as Vn, x: event.clientX, y: event.clientY })} />
+              : <CharacterCard key={`ch-${(item as Character).id}`} character={item as Character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} onAdd={(event) => setAddRefPopover({ item: item as Character, x: event.clientX, y: event.clientY })} />)}
           </div>
+          <button className="resizeHandle" type="button" onPointerDown={startResizeLocalSearch}>{t.resizeListHeight}</button>
+          <div className="resizeHelp">{t.resizeListHeightHelp}</div>
         </div>
         <div className="panel sampleProfilePanel" ref={sampleProfilePanelRef}>
           <div className="samplePanelHead">
             <h2>{t.selectedSamples}</h2>
             <button className="sampleClearButton" onClick={clearSelections} disabled={!hasSelectedSamples}>{t.clear}</button>
           </div>
-          <div className="list compact selectedSampleList">
-            {mode === 'vn'
-              ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={vnDetails[vn.id]} showMedia showDescription={false} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector(vn.tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} onRemove={() => setSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
-              : selectedCharacters.map((character) => <CharacterCard key={`selected-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} onRemove={() => setSelectedCharacters((list) => list.filter((it) => it.id !== character.id))} />)}
-          </div>
-          <div className="profileHead">
-            <h3>{t.profile}</h3>
-          </div>
-          {profilePanelComputing ? <div className="empty profileComputingNotice">{t.computing}</div> : mode === 'vn' ? <div className="chips profileChips">
-            {profileItems.map(([id, value]) => {
-              const meta = tagMeta.get(id);
-              if (!meta) return null;
-              const name = metaName(meta, renderShowSexual, metaLanguage, uiLanguage);
-              const priority = priorityTags.has(id);
-              const chipSpoilerClass = spoilerClass(vnProfileSpoilers.get(id) ?? 0);
-              return <button key={`g-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${meta.tech ? 'technical' : ''} ${meta.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
-            })}
-          </div> : <div className="traitGroupList profileChips">
-            {groupedProfileTraits.map(([label, items]) => <div className="traitGroup" key={`profile-group-${label}`}>
-              <div className="traitGroupLabel">{label}</div>
-              <div className="chips">
-                {items.map(([id, value]) => {
-                  const meta = traitMeta.get(id);
-                  if (!meta) return null;
-                  const name = metaName(meta, renderShowSexual, metaLanguage, uiLanguage);
-                  const priority = priorityTraits.has(id);
-                  const chipSpoilerClass = spoilerClass(characterProfileSpoilers.get(id) ?? 0);
-                  return <button key={`i-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''}`} onClick={() => togglePriority(id)} title={metaTooltip(meta, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {value.toFixed(2)}</button>;
-                })}
+          <div ref={sampleProfileListRef} className="sampleReferenceList" style={{ height: `${sampleProfileListHeight}px`, maxHeight: `${sampleProfileListHeight}px` }}>
+            <div className="list compact selectedSampleList">
+              {mode === 'vn'
+                ? selectedVns.map((vn) => <VnCard key={`selected-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={vnDetails[vn.id]} showMedia showDescription={false} priorityMatched={priorityTags.size ? priorityMatch(priorityTags, makeVector(vn.tags, tagMeta, 'tag', renderShowSpoiler, false, activePriorityTags)) : undefined} priorityTotal={priorityTags.size || undefined} priorityConfidenceDecimals={2} isSelected weight={sampleWeights.get(`v${vn.id}`) ?? 1.0} onWeightChange={(value) => setSampleWeights((prev) => { const next = new Map(prev); if (value === 1) next.delete(`v${vn.id}`); else next.set(`v${vn.id}`, value); return next; })} onRemove={() => { setSelectedVns((list) => list.filter((it) => it.id !== vn.id)); setSampleWeights((prev) => { const next = new Map(prev); next.delete(`v${vn.id}`); return next; }); }} />)
+                : selectedCharacters.map((character) => <CharacterCard key={`selected-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} isSelected weight={sampleWeights.get(`c${character.id}`) ?? 1.0} onWeightChange={(value) => setSampleWeights((prev) => { const next = new Map(prev); if (value === 1) next.delete(`c${character.id}`); else next.set(`c${character.id}`, value); return next; })} onRemove={() => { setSelectedCharacters((list) => list.filter((it) => it.id !== character.id)); setSampleWeights((prev) => { const next = new Map(prev); next.delete(`c${character.id}`); return next; }); }} />)}
+            </div>
+            {hasNegativeSamples ? <div className="negativeSamplePanel">
+              <div className="samplePanelHead">
+                <h3>{t.negativeSamples}</h3>
               </div>
-            </div>)}
-          </div>}
+              <div className="list compact selectedSampleList">
+                {mode === 'vn'
+                  ? negativeSelectedVns.map((vn) => <VnCard key={`neg-vn-${vn.id}`} vn={vn} meta={tagMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} showBlockedTags={renderShowBlockedTags} showTechnicalTags={renderShowTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} detail={vnDetails[vn.id]} showMedia showDescription={false} isNegative isSelected weight={negativeSampleWeights.get(`v${vn.id}`) ?? 1.0} onWeightChange={(value) => setNegativeSampleWeights((prev) => { const next = new Map(prev); if (value === 1) next.delete(`v${vn.id}`); else next.set(`v${vn.id}`, value); return next; })} onRemove={() => setNegativeSelectedVns((list) => list.filter((it) => it.id !== vn.id))} />)
+                  : negativeSelectedCharacters.map((character) => <CharacterCard key={`neg-ch-${character.id}`} character={character} vns={vnById} meta={traitMeta} showSexual={renderShowSexual} showSpoiler={renderShowSpoiler} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} preferAverage={preferCharacterAverage} detail={characterDetails[character.id]} showMedia showDescription={false} isNegative isSelected weight={negativeSampleWeights.get(`c${character.id}`) ?? 1.0} onWeightChange={(value) => setNegativeSampleWeights((prev) => { const next = new Map(prev); if (value === 1) next.delete(`c${character.id}`); else next.set(`c${character.id}`, value); return next; })} onRemove={() => setNegativeSelectedCharacters((list) => list.filter((it) => it.id !== character.id))} />)}
+              </div>
+            </div> : null}
+          </div>
+          <button className="resizeHandle" type="button" onPointerDown={startResizeSampleProfile}>{t.resizeListHeight}</button>
+          <div className="resizeHelp">{t.resizeListHeightHelp}</div>
         </div>
       </section>}
+
+      {(mode === 'vn' || mode === 'character') ? <section className="panel profileFullWidthPanel">
+        <div className="profileHead">
+          <h3>{t.profile}</h3>
+        </div>
+        {profilePanelComputing ? <div className="empty profileComputingNotice">{t.computing}</div> : mode === 'vn' ? <ProfileByTagType items={profileItems} meta={tagMeta} priorityTags={priorityTags} negativePriorityTags={negativePriorityTags} renderShowSexual={renderShowSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} spoilers={vnProfileSpoilers} onTogglePriority={(id, event) => { const priority = priorityTags.has(id); const negPriority = negativePriorityTags.has(id); if (priority || negPriority) { togglePriority(id, negPriority); return; } const rect = (event.target as HTMLElement).getBoundingClientRect(); setPriorityPopover({ kind: 'tag', id, x: rect.left, y: rect.bottom }); }} kind="tag" /> : <div className="traitGroupList profileChips">
+          {groupedProfileTraits.map(([label, items]) => <div className="traitGroup" key={`profile-group-${label}`}>
+            <div className="traitGroupLabel">{label}</div>
+            <div className="chips">
+              {items.map(([id, value]) => {
+                const meta = traitMeta.get(id);
+                if (!meta) return null;
+                const name = metaName(meta, renderShowSexual, metaLanguage, uiLanguage);
+                const priority = priorityTraits.has(id);
+                const negPriority = negativePriorityTraits.has(id);
+                const chipSpoilerClass = spoilerClass(characterProfileSpoilers.get(id) ?? 0);
+                return <button key={`i-${id}`} className={`chip profileTracked ${meta.sexual ? 'sexual' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''} ${negPriority ? 'negativePriority' : ''}`} onClick={(event) => { const rect = (event.target as HTMLElement).getBoundingClientRect(); if (priority || negPriority) { togglePriority(id, negPriority); return; } setPriorityPopover({ kind: 'trait', id, x: rect.left, y: rect.bottom }); }} title={metaTooltip(meta, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {metaDisplayWeight(value)}</button>;
+              })}
+            </div>
+          </div>)}
+        </div>}
+      </section> : null}
 
       <section className="panel" ref={recommendationResultsRef}>
         <div className="sectionHead">
@@ -2574,6 +2829,28 @@ function App() {
         {dataBuildDate ? <div>{`${t.dataLastUpdated}：UTC+08:00 ${dataBuildDate}`}</div> : null}
         <div>{t.license}</div>
       </footer>
+
+      {addRefPopover ? <div className="popoverOverlay" onClick={() => setAddRefPopover(null)}>
+        <div className="popover" style={{ position: 'fixed', left: addRefPopover.x, top: addRefPopover.y, transform: 'translate(-50%, 8px)' }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => addSelection(addRefPopover.item, false)}>{t.addPositiveSample}</button>
+          <button className="danger" onClick={() => addSelection(addRefPopover.item, true)}>{t.addNegativeSample}</button>
+        </div>
+      </div> : null}
+
+      {priorityPopover ? <div className="popoverOverlay" onClick={() => setPriorityPopover(null)}>
+        <div className="popover" style={{ position: 'fixed', left: priorityPopover.x, top: priorityPopover.y, transform: 'translate(-50%, 8px)' }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { if (priorityPopover.kind === 'profile') togglePriority(priorityPopover.id, false); else if (priorityPopover.kind === 'tag') toggleTagSearchMeta('tag', priorityPopover.id, false); else toggleTagSearchMeta('trait', priorityPopover.id, false); setPriorityPopover(null); }}>{t.addPositivePriority}</button>
+          <button className="danger" onClick={() => { if (priorityPopover.kind === 'profile') togglePriority(priorityPopover.id, true); else if (priorityPopover.kind === 'tag') toggleTagSearchMeta('tag', priorityPopover.id, true); else toggleTagSearchMeta('trait', priorityPopover.id, true); setPriorityPopover(null); }}>{t.addNegativePriority}</button>
+        </div>
+      </div> : null}
+
+      {metaSearchPopover ? <div className="popoverOverlay" onClick={() => setMetaSearchPopover(null)}>
+        <div className="popover" style={{ position: 'fixed', left: metaSearchPopover.x, top: metaSearchPopover.y, transform: 'translate(-50%, 8px)' }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { toggleTagSearchMeta(metaSearchPopover.kind, metaSearchPopover.id, false); setMetaSearchPopover(null); }}>{t.addPositivePriority}</button>
+          <button className="danger" onClick={() => { toggleTagSearchMeta(metaSearchPopover.kind, metaSearchPopover.id, true); setMetaSearchPopover(null); }}>{t.addNegativePriority}</button>
+        </div>
+      </div> : null}
+
     </main>
   );
 }
@@ -2691,7 +2968,7 @@ function aggregateMetaUsageCounts(directSets: Map<number, Set<number>>, metas: M
   return new Map(metas.map((metaItem) => [metaItem.id, metaAllowedByFilters(metaItem, kind, showSexual, showSpoiler, showBlockedTags, showTechnicalTags) ? usageFor(metaItem).size : 0]));
 }
 
-function TagSearchPanel({ tags, traits, tagMeta, traitMeta, tagUsageCounts, traitUsageCounts, selectedTags, selectedTraits, setSelectedTags, setSelectedTraits, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t }: { tags: Meta[]; traits: Meta[]; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; tagUsageCounts: Map<number, number>; traitUsageCounts: Map<number, number>; selectedTags: Set<number>; selectedTraits: Set<number>; setSelectedTags: React.Dispatch<React.SetStateAction<Set<number>>>; setSelectedTraits: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string> }) {
+function TagSearchPanel({ tags, traits, tagMeta, traitMeta, tagUsageCounts, traitUsageCounts, selectedTags, selectedTraits, setSelectedTags, setSelectedTraits, excludedTags, excludedTraits, setExcludedTags, setExcludedTraits, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t, onRequestMetaChoice }: { tags: Meta[]; traits: Meta[]; tagMeta: Map<number, Meta>; traitMeta: Map<number, Meta>; tagUsageCounts: Map<number, number>; traitUsageCounts: Map<number, number>; selectedTags: Set<number>; selectedTraits: Set<number>; setSelectedTags: React.Dispatch<React.SetStateAction<Set<number>>>; setSelectedTraits: React.Dispatch<React.SetStateAction<Set<number>>>; excludedTags: Set<number>; excludedTraits: Set<number>; setExcludedTags: React.Dispatch<React.SetStateAction<Set<number>>>; setExcludedTraits: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; onRequestMetaChoice: (kind: 'tag' | 'trait', id: number, event: React.MouseEvent) => void }) {
   const [tagSelectorHeight, setTagSelectorHeight] = useState(() => loadMetaSelectorState('tag')?.height ?? 520);
   const [traitSelectorHeight, setTraitSelectorHeight] = useState(() => loadMetaSelectorState('trait')?.height ?? 520);
   const [tagCollapseVersion, setTagCollapseVersion] = useState(0);
@@ -2702,14 +2979,14 @@ function TagSearchPanel({ tags, traits, tagMeta, traitMeta, tagUsageCounts, trai
         <div><h2>{t.tagPanelTitle}</h2><p>{t.tagPanelDesc}</p></div>
         <div className="buttonRow"><button onClick={() => setTagCollapseVersion((version) => version + 1)}>{t.collapseAll}</button><button onClick={() => setSelectedTags(new Set())} disabled={!selectedTags.size}>{t.clear}</button></div>
       </div>
-      <MetaSelector kind="tag" items={tags} meta={tagMeta} usageCounts={tagUsageCounts} selected={selectedTags} setSelected={setSelectedTags} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={tagSelectorHeight} setHeight={setTagSelectorHeight} collapseVersion={tagCollapseVersion} />
+      <MetaSelector kind="tag" items={tags} meta={tagMeta} usageCounts={tagUsageCounts} selected={selectedTags} setSelected={setSelectedTags} excluded={excludedTags} setExcluded={setExcludedTags} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags={showBlockedTags} showTechnicalTags={showTechnicalTags} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={tagSelectorHeight} setHeight={setTagSelectorHeight} collapseVersion={tagCollapseVersion} onRequestChoice={onRequestMetaChoice} />
     </div>
     <div className="panel">
       <div className="sectionHead compactHead">
         <div><h2>{t.traitPanelTitle}</h2><p>{t.traitPanelDesc}</p></div>
         <div className="buttonRow"><button onClick={() => setTraitCollapseVersion((version) => version + 1)}>{t.collapseAll}</button><button onClick={() => setSelectedTraits(new Set())} disabled={!selectedTraits.size}>{t.clear}</button></div>
       </div>
-      <MetaSelector kind="trait" items={traits} meta={traitMeta} usageCounts={traitUsageCounts} selected={selectedTraits} setSelected={setSelectedTraits} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags showTechnicalTags metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={traitSelectorHeight} setHeight={setTraitSelectorHeight} collapseVersion={traitCollapseVersion} />
+      <MetaSelector kind="trait" items={traits} meta={traitMeta} usageCounts={traitUsageCounts} selected={selectedTraits} setSelected={setSelectedTraits} excluded={excludedTraits} setExcluded={setExcludedTraits} showSexual={showSexual} showSpoiler={showSpoiler} showBlockedTags showTechnicalTags metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} height={traitSelectorHeight} setHeight={setTraitSelectorHeight} collapseVersion={traitCollapseVersion} onRequestChoice={onRequestMetaChoice} />
     </div>
   </section>;
 }
@@ -2747,7 +3024,6 @@ function SelectedMetaSummary({ selected, meta, showSexual, metaLanguage, uiLangu
   const selectedItems = [...selected].map((id) => meta.get(id)).filter((item): item is Meta => Boolean(item)).sort((a, b) => metaName(a, showSexual, metaLanguage, uiLanguage).localeCompare(metaName(b, showSexual, metaLanguage, uiLanguage)));
   if (!selectedItems.length) return null;
   return <div className="selectedMetaBox">
-    <div className="selectedMetaTitle">{t.selectedMeta} <span>{selectedItems.length}</span></div>
     <div className="selectedMetaList">
       {selectedItems.map((item) => {
         const ancestors = metaAncestors(item, meta);
@@ -2760,7 +3036,69 @@ function SelectedMetaSummary({ selected, meta, showSexual, metaLanguage, uiLangu
   </div>;
 }
 
-function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t, height, setHeight, collapseVersion }: { kind: 'tag' | 'trait'; items: Meta[]; meta: Map<number, Meta>; usageCounts: Map<number, number>; selected: Set<number>; setSelected: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; height: number; setHeight: React.Dispatch<React.SetStateAction<number>>; collapseVersion: number }) {
+function ExcludedMetaSummary({ excluded, meta, showSexual, metaLanguage, uiLanguage, t, toggle }: { excluded: Set<number>; meta: Map<number, Meta>; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; toggle: (id: number) => void }) {
+  const excludedItems = [...excluded].map((id) => meta.get(id)).filter((item): item is Meta => Boolean(item)).sort((a, b) => metaName(a, showSexual, metaLanguage, uiLanguage).localeCompare(metaName(b, showSexual, metaLanguage, uiLanguage)));
+  if (!excludedItems.length) return null;
+  return <div className="selectedMetaBox excludedMetaBox">
+    <div className="selectedMetaList">
+      {excludedItems.map((item) => {
+        const ancestors = metaAncestors(item, meta);
+        return <div className="selectedMetaItem" key={`excluded-meta-${item.id}`}>
+          <button className="chip excludedMetaChip" title={metaTooltip(item, showSexual, metaLanguage, uiLanguage)} onClick={() => toggle(item.id)}>⊘ {metaName(item, showSexual, metaLanguage, uiLanguage)}</button>
+          {ancestors.length ? <div className="selectedMetaParents"><span>{t.parentMeta}</span>{ancestors.map((parent) => <span key={`excluded-meta-${item.id}-parent-${parent.id}`} className={metaChipClass(parent)} title={metaTooltip(parent, showSexual, metaLanguage, uiLanguage)}>{metaName(parent, showSexual, metaLanguage, uiLanguage)}</span>)}</div> : null}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function blockedTagProfileGroup(metaItem: Meta, meta: Map<number, Meta>) {
+  if (!metaItem.blocked) return null;
+  if (metaItem.id === 20 || metaItem.parents?.includes(20)) return 'character';
+  if (metaItem.id === 305 || metaItem.parents?.includes(305)) return 'scene';
+  const ancestors = metaAncestors(metaItem, meta);
+  if (ancestors.some((item) => item.id === 20)) return 'character';
+  if (ancestors.some((item) => item.id === 305)) return 'scene';
+  return 'scene';
+}
+
+function groupProfileTagRows(items: [number, number][], meta: Map<number, Meta>, showSexual: boolean, metaLanguage: MetaLanguage, uiLanguage: UiLanguage, kind: 'tag' | 'trait') {
+  const groups: Record<string, [number, number][]> = { normal: [], spoiler1: [], spoiler2: [], technical: [], r18: [], character: [], scene: [] };
+  for (const [id, value] of items) {
+    const metaItem = meta.get(id);
+    if (!metaItem) continue;
+    if (metaItem.sexual) {
+      if (showSexual) groups.r18.push([id, value]);
+      continue;
+    }
+    if (kind === 'trait') {
+      groups.normal.push([id, value]);
+      continue;
+    }
+    const blockedGroup = blockedTagProfileGroup(metaItem, meta);
+    if (blockedGroup) {
+      groups[blockedGroup].push([id, value]);
+      continue;
+    }
+    if (metaItem.tech) {
+      groups.technical.push([id, value]);
+      continue;
+    }
+    const spoiler = itemSpoiler([id, value, 0, 0] as Pair, 'tag');
+    if (spoiler === 1) {
+      groups.spoiler1.push([id, value]);
+      continue;
+    }
+    if (spoiler >= 2) {
+      groups.spoiler2.push([id, value]);
+      continue;
+    }
+    groups.normal.push([id, value]);
+  }
+  return Object.entries(groups).filter(([, groupItems]) => groupItems.length).map(([label, groupItems]) => ({ label, groupItems }));
+}
+
+function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, excluded, setExcluded, showSexual, showSpoiler, showBlockedTags, showTechnicalTags, metaLanguage, uiLanguage, t, height, setHeight, collapseVersion, onRequestChoice }: { kind: 'tag' | 'trait'; items: Meta[]; meta: Map<number, Meta>; usageCounts: Map<number, number>; selected: Set<number>; setSelected: React.Dispatch<React.SetStateAction<Set<number>>>; excluded: Set<number>; setExcluded: React.Dispatch<React.SetStateAction<Set<number>>>; showSexual: boolean; showSpoiler: boolean; showBlockedTags: boolean; showTechnicalTags: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; height: number; setHeight: React.Dispatch<React.SetStateAction<number>>; collapseVersion: number; onRequestChoice: (kind: 'tag' | 'trait', id: number, event: React.MouseEvent) => void }) {
   const persistedSelectorState = useMemo(() => loadMetaSelectorState(kind), [kind]);
   const [query, setQuery] = useState(() => persistedSelectorState?.query ?? '');
   const [openNodeIds, setOpenNodeIds] = useState<Set<number>>(() => new Set(persistedSelectorState?.openNodeIds ?? []));
@@ -2938,13 +3276,17 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
     for (const id of selected) ids.delete(id);
     return ids;
   }, [selected, meta]);
+  const excludedDescendantIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const id of excluded) {
+      const item = meta.get(id);
+      if (!item) continue;
+      for (const ancestor of metaAncestors(item, meta)) ids.add(ancestor.id);
+    }
+    for (const id of excluded) ids.delete(id);
+    return ids;
+  }, [excluded, meta]);
   const labels: Record<string, string> = { cont: t.metaCategoryContent, ero: 'R18', tech: t.metaCategoryTechnical, other: t.metaCategoryOther };
-  const toggle = useCallback((id: number) => setSelected((current) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
-  }), [setSelected]);
   const groupEntries = useMemo(() => {
     const groups = new Map<string, Meta[]>();
     const addToGroup = (label: string, item: Meta) => {
@@ -2979,7 +3321,8 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
   }, [kind, query, openNodeIds, openGroupLabels, height]);
   return <div className="metaSelectorWrap">
     <label className="metaFilter"><span>{kind === 'tag' ? t.tagFilter : t.traitFilter}</span><input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-    <SelectedMetaSummary selected={selected} meta={meta} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} toggle={toggle} />
+    <SelectedMetaSummary selected={selected} meta={meta} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} toggle={(id) => onRequestChoice(kind, id, { target: selectorRef.current ?? document.body } as unknown as React.MouseEvent)} />
+    <ExcludedMetaSummary excluded={excluded} meta={meta} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} t={t} toggle={(id) => onRequestChoice(kind, id, { target: selectorRef.current ?? document.body } as unknown as React.MouseEvent)} />
     <div ref={selectorRef} className="metaSelector" style={{ height }} onScroll={saveScrollState}>
       {groupEntries.map(([label, groupItems]) => <details key={`${kind}-group-${label}`} className={metaTreeGroupClass(kind, label, groupItems, meta)} open={Boolean(q) || openGroupLabels.has(label)} onToggle={(event) => {
         const open = event.currentTarget.open;
@@ -2997,8 +3340,8 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
             ? (treeIndex.children.get(item.id) ?? [])
               .filter((child) => isVisible(child) && shouldDisplayUnderParent(item, child) && (!filteredTree.visibleIds || filteredTree.visibleIds.has(child.id)))
               .sort((a, b) => compareMetaTreeDisplay(a, b, filteredTree.visibleIds))
-              .map((child) => <MetaTreeNode key={`${kind}-tree-${label}-${child.id}`} item={child} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set([item.id])} />)
-            : <MetaTreeNode key={`${kind}-tree-${label}-${item.id}`} item={item} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set()} />)}
+              .map((child) => <MetaTreeNode key={`${kind}-tree-${label}-${child.id}`} item={child} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} excluded={excluded} selectedDescendantIds={selectedDescendantIds} excludedDescendantIds={excludedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={(id, event) => onRequestChoice(kind, id, event)} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set([item.id])} />)
+            : <MetaTreeNode key={`${kind}-tree-${label}-${item.id}`} item={item} children={treeIndex.children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={filteredTree.visibleIds} usageCounts={usageCounts} selected={selected} excluded={excluded} selectedDescendantIds={selectedDescendantIds} excludedDescendantIds={excludedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={(id, event) => onRequestChoice(kind, id, event)} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={filteredTree.matchedIds} query={q} path={new Set()} />)}
         </div>
       </details>)}
     </div>
@@ -3007,16 +3350,18 @@ function MetaSelector({ kind, items, meta, usageCounts, selected, setSelected, s
   </div>;
 }
 
-function MetaTreeNode({ item, children, isVisible, shouldDisplayUnderParent, compareMetaTreeDisplay, visibleIds, usageCounts, selected, selectedDescendantIds, openNodeIds, setOpenNodeIds, toggle, showSexual, metaLanguage, uiLanguage, matchedIds, query, path }: { item: Meta; children: Map<number, Meta[]>; isVisible: (item: Meta) => boolean; shouldDisplayUnderParent: (parent: Meta, child: Meta) => boolean; compareMetaTreeDisplay: (a: Meta, b: Meta, visibleIds: Set<number> | null) => number; visibleIds: Set<number> | null; usageCounts: Map<number, number>; selected: Set<number>; selectedDescendantIds: Set<number>; openNodeIds: Set<number>; setOpenNodeIds: React.Dispatch<React.SetStateAction<Set<number>>>; toggle: (id: number) => void; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; matchedIds: Set<number>; query: string; path: Set<number> }) {
+function MetaTreeNode({ item, children, isVisible, shouldDisplayUnderParent, compareMetaTreeDisplay, visibleIds, usageCounts, selected, excluded, selectedDescendantIds, excludedDescendantIds, openNodeIds, setOpenNodeIds, toggle, showSexual, metaLanguage, uiLanguage, matchedIds, query, path }: { item: Meta; children: Map<number, Meta[]>; isVisible: (item: Meta) => boolean; shouldDisplayUnderParent: (parent: Meta, child: Meta) => boolean; compareMetaTreeDisplay: (a: Meta, b: Meta, visibleIds: Set<number> | null) => number; visibleIds: Set<number> | null; usageCounts: Map<number, number>; selected: Set<number>; excluded: Set<number>; selectedDescendantIds: Set<number>; excludedDescendantIds: Set<number>; openNodeIds: Set<number>; setOpenNodeIds: React.Dispatch<React.SetStateAction<Set<number>>>; toggle: (id: number, event: React.MouseEvent) => void; showSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; matchedIds: Set<number>; query: string; path: Set<number> }) {
   const childItems = (children.get(item.id) ?? [])
     .filter((child) => child.id !== item.id && isVisible(child) && shouldDisplayUnderParent(item, child) && (!visibleIds || visibleIds.has(child.id)) && !path.has(child.id))
     .sort((a, b) => compareMetaTreeDisplay(a, b, visibleIds));
   const highlighted = Boolean(query && matchedIds.has(item.id));
   const canSelect = item.searchable !== false || childItems.length > 0;
   const selectedCurrent = selected.has(item.id);
+  const excludedCurrent = excluded.has(item.id);
   const descendantSelected = selectedDescendantIds.has(item.id);
+  const descendantExcluded = excludedDescendantIds.has(item.id);
   const childCountText = childItems.length ? ` ${childItems.length}` : '';
-  const chip = <button className={`chip ${selectedCurrent ? 'selectedMetaChip' : `${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`} ${descendantSelected ? 'descendantSelected' : ''} ${highlighted ? 'matched' : ''}`} title={metaTooltip(item, showSexual, metaLanguage, uiLanguage)} onClick={(event) => { event.preventDefault(); if (canSelect) toggle(item.id); }}>{selectedCurrent ? '★ ' : ''}{descendantSelected ? '◆ ' : ''}{metaName(item, showSexual, metaLanguage, uiLanguage)}{childCountText}</button>;
+  const chip = <button className={`chip ${selectedCurrent ? 'selectedMetaChip' : excludedCurrent ? 'excludedMetaChip' : `${item.sexual ? 'sexual' : ''} ${item.tech ? 'technical' : ''} ${item.blocked ? 'blocked' : ''}`} ${descendantSelected ? 'descendantSelected' : ''} ${descendantExcluded ? 'excludedDescendant' : ''} ${highlighted ? 'matched' : ''}`} title={metaTooltip(item, showSexual, metaLanguage, uiLanguage)} onClick={(event) => { event.preventDefault(); if (canSelect) toggle(item.id, event); }}>{selectedCurrent ? '★ ' : ''}{excludedCurrent ? '⊘ ' : ''}{descendantSelected ? '◆ ' : ''}{descendantExcluded ? '◇ ' : ''}{metaName(item, showSexual, metaLanguage, uiLanguage)}{childCountText}</button>;
   const usage = <span className="metaUsageCount">{(usageCounts.get(item.id) ?? 0).toLocaleString()}</span>;
   if (!childItems.length) return <div className="metaTreeLeaf"><div className="metaTreeRow"><span className="metaTreeLeft"><span className="metaExpandPlaceholder" />{chip}</span>{usage}</div></div>;
   const nextPath = new Set(path);
@@ -3034,7 +3379,7 @@ function MetaTreeNode({ item, children, isVisible, shouldDisplayUnderParent, com
   }}>
     <summary><div className="metaTreeRow"><span className="metaTreeLeft"><span className="metaExpandArrow">▸</span>{chip}</span>{usage}</div></summary>
     {nodeOpen ? <div className="metaTreeChildren">
-      {childItems.map((child) => <MetaTreeNode key={`tree-child-${item.id}-${child.id}`} item={child} children={children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={visibleIds} usageCounts={usageCounts} selected={selected} selectedDescendantIds={selectedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={matchedIds} query={query} path={nextPath} />)}
+      {childItems.map((child) => <MetaTreeNode key={`tree-child-${item.id}-${child.id}`} item={child} children={children} isVisible={isVisible} shouldDisplayUnderParent={shouldDisplayUnderParent} compareMetaTreeDisplay={compareMetaTreeDisplay} visibleIds={visibleIds} usageCounts={usageCounts} selected={selected} excluded={excluded} selectedDescendantIds={selectedDescendantIds} excludedDescendantIds={excludedDescendantIds} openNodeIds={openNodeIds} setOpenNodeIds={setOpenNodeIds} toggle={toggle} showSexual={showSexual} metaLanguage={metaLanguage} uiLanguage={uiLanguage} matchedIds={matchedIds} query={query} path={nextPath} />)}
     </div> : null}
   </details>;
 }
@@ -3079,13 +3424,27 @@ function VnRelations({ relations, vns, t, language }: { relations: VnRelation[];
   return <div className="mini relationList"><div>{t.relatedVns}：</div>{items.map(({ id, relation, vn }) => <div key={`related-vn-${id}-${relation}`}><VnRelationLabel relation={relation} language={language} />：<a href={vndbUrl('v', id)} target="_blank" rel="noreferrer">{vn?.title ?? `v${id}`}</a></div>)}</div>;
 }
 
+function characterRoleText(role: string, t: Record<string, string>) {
+  if (role === 'primary') return t.primary;
+  if (role === 'main') return t.main;
+  if (role === 'side') return t.side;
+  if (role === 'appears') return t.appears;
+  return role;
+}
+
 function priorityConfidenceText(priorityMatched: number | undefined, priorityTotal: number | undefined, priorityConfidence: number | undefined, decimals: number) {
   if (!priorityTotal) return null;
   const confidence = Math.min(priorityConfidence ?? ((priorityMatched ?? 0) / priorityTotal), 1) * 100;
   return `${priorityMatched ?? 0}/${priorityTotal}（${confidence.toFixed(decimals)}%）`;
 }
 
-function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, showTechnicalTags = true, metaLanguage, uiLanguage, t, vns, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, relations = [] }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; showTechnicalTags?: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t?: Record<string, string>; vns?: Map<number, Vn>; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; relations?: VnRelation[] }) {
+function ProfileByTagType({ items, meta, priorityTags, negativePriorityTags, renderShowSexual, metaLanguage, uiLanguage, t, spoilers, onTogglePriority, kind }: { items: [number, number][]; meta: Map<number, Meta>; priorityTags: Set<number>; negativePriorityTags: Set<number>; renderShowSexual: boolean; metaLanguage: MetaLanguage; uiLanguage: UiLanguage; t: Record<string, string>; spoilers: Map<number, number>; onTogglePriority: (id: number, event: React.MouseEvent) => void; kind: 'tag' | 'trait' }) {
+  const groups = groupProfileTagRows(items, meta, renderShowSexual, metaLanguage, uiLanguage, kind);
+  const labels: Record<string, string> = { normal: t.normalTags, spoiler1: t.spoiler1Tags, spoiler2: t.spoiler2Tags, technical: t.technicalTags || 'Technical', r18: 'R18', character: t.characterTags || 'Character', scene: t.sceneTags || 'Scene' };
+  return <div className="profileByTagType">{groups.map(({ label, groupItems }) => <div className="profileTagGroup" key={`profile-tag-group-${label}`}><div className="profileTagGroupLabel">{labels[label] ?? label}</div><div className="chips">{groupItems.map(([id, value]) => { const metaItem = meta.get(id); if (!metaItem) return null; const name = metaName(metaItem, renderShowSexual, metaLanguage, uiLanguage); const priority = priorityTags.has(id); const negPriority = negativePriorityTags.has(id); const chipSpoilerClass = spoilerClass(spoilers.get(id) ?? 0); return <button key={`ptg-${id}`} className={`chip profileTracked ${metaItem.sexual ? 'sexual' : ''} ${metaItem.tech ? 'technical' : ''} ${metaItem.blocked ? 'blocked' : ''} ${chipSpoilerClass} ${priority ? 'priority' : ''} ${negPriority ? 'negativePriority' : ''}`} onClick={(event) => onTogglePriority(id, event)} title={metaTooltip(metaItem, renderShowSexual, metaLanguage, uiLanguage)}>{priority ? '★ ' : ''}{name} {metaDisplayWeight(value)}</button>; })}</div></div>)}</div>;
+}
+
+function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, showTechnicalTags = true, metaLanguage, uiLanguage, t, vns, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, relations = [], weight, onWeightChange, isNegative = false, isSelected = false }: { vn: Vn; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; showBlockedTags?: boolean; showTechnicalTags?: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t?: Record<string, string>; vns?: Map<number, Vn>; onAdd?: (event: React.MouseEvent) => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; relations?: VnRelation[]; weight?: number; onWeightChange?: (value: number) => void; isNegative?: boolean; isSelected?: boolean }) {
   const texts = t ?? UI_TEXT.zh;
   const language = uiLanguage ?? 'zh';
   const producers = detail?.developers?.length ? detail.developers : [...vn.developers, ...vn.publishers];
@@ -3098,8 +3457,11 @@ function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, sho
       <div className="cardBody">
         <div className="cardHead">
           <div><h3><a href={vndbUrl('v', vn.id)} target="_blank" rel="noreferrer">{vn.title}</a></h3>{vn.original && vn.original !== vn.title ? <p>{vn.original}</p> : null}</div>
-          {onAdd ? <button onClick={onAdd}>{texts.addSample}</button> : null}
-          {onRemove ? <button className="danger" onClick={onRemove}>{texts.remove}</button> : null}
+          <div className="cardHeadActions">
+            {isSelected ? <label className="weightControl"><span>{texts.weightOccupy}</span><input type="number" className="weightInput" value={weight ?? 1.0} min={0} max={100} step={0.1} onChange={(event) => onWeightChange?.(Number(event.target.value) || 0)} title={texts.weightHelp} /></label> : null}
+            {onAdd ? <button onClick={onAdd}>{texts.addSample}</button> : null}
+            {onRemove ? <button className="danger" onClick={onRemove}>{texts.remove}</button> : null}
+          </div>
         </div>
         <div className="metrics"><span>v{vn.id}</span><span>{texts.rating} {vn.rating.toFixed(1)}</span><span>{vn.votes} {texts.votes}</span>{detail?.loading ? <span>{texts.detailsLoading}</span> : null}{detail?.error ? <span>{texts.detailsFailed}</span> : null}{similarity !== undefined ? <span>{texts.similarity} {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>{texts.overlap} {overlap}</span> : null}{priorityConfidenceLabel ? <span>{texts.priorityConfidence} {priorityConfidenceLabel}</span> : null}</div>
         <ProducerLinks producers={producers} t={texts} />
@@ -3115,7 +3477,7 @@ function VnCard({ vn, meta, showSexual, showSpoiler, showBlockedTags = true, sho
   );
 }
 
-function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLanguage, uiLanguage = 'zh', t, preferAverage = false, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, minVotes, roleFilter }: { character: Character; vns: Map<number, Vn>; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t: Record<string, string>; preferAverage?: boolean; onAdd?: () => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; minVotes?: number; roleFilter?: CharacterRoleFilter }) {
+function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLanguage, uiLanguage = 'zh', t, preferAverage = false, onAdd, onRemove, detail, showMedia = false, showDescription = true, similarity, overlap, priorityMatched, priorityTotal, priorityConfidence, priorityConfidenceDecimals = 0, minVotes, roleFilter, weight, onWeightChange, isNegative = false, isSelected = false }: { character: Character; vns: Map<number, Vn>; meta: Map<number, Meta>; showSexual: boolean; showSpoiler: boolean; metaLanguage: MetaLanguage; uiLanguage?: UiLanguage; t: Record<string, string>; preferAverage?: boolean; onAdd?: (event: React.MouseEvent) => void; onRemove?: () => void; detail?: Detail; showMedia?: boolean; showDescription?: boolean; similarity?: number; overlap?: number; priorityMatched?: number; priorityTotal?: number; priorityConfidence?: number; priorityConfidenceDecimals?: number; minVotes?: number; roleFilter?: CharacterRoleFilter; weight?: number; onWeightChange?: (value: number) => void; isNegative?: boolean; isSelected?: boolean }) {
   const displayedVns = character.vns.filter(([id, role]) => (minVotes === undefined || (vns.get(id)?.votes ?? 0) >= minVotes) && (!roleFilter || roleAllowed(role, roleFilter)));
   const displayedScores = displayedVns.map(([id]) => vns.get(id)?.average ?? 0).filter((score) => score > 0);
   const averageScore = displayedScores.length ? displayedScores.reduce((sum, score) => sum + score, 0) / displayedScores.length : characterAverageScore(character, vns);
@@ -3128,8 +3490,11 @@ function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLang
       <div className="cardBody">
         <div className="cardHead">
           <div><h3><a href={vndbUrl('c', character.id)} target="_blank" rel="noreferrer">{character.name}</a></h3>{character.original && character.original !== character.name ? <p>{character.original}</p> : null}</div>
-          {onAdd ? <button onClick={onAdd}>{t.addSample}</button> : null}
-          {onRemove ? <button className="danger" onClick={onRemove}>{t.remove}</button> : null}
+          <div className="cardHeadActions">
+            {isSelected ? <label className="weightControl"><span>{t.weightOccupy}</span><input type="number" className="weightInput" value={weight ?? 1.0} min={0} max={100} step={0.1} onChange={(event) => onWeightChange?.(Number(event.target.value) || 0)} title={t.weightHelp} /></label> : null}
+            {onAdd ? <button onClick={onAdd}>{t.addSample}</button> : null}
+            {onRemove ? <button className="danger" onClick={onRemove}>{t.remove}</button> : null}
+          </div>
         </div>
         <div className="metrics"><span>c{character.id}</span><span>{t.associationScore} {character.score.toFixed(1)}</span>{averageScore ? <span>{t.vnAverage} {averageScore.toFixed(1)}</span> : null}{preferAverage ? <span>{t.averageWeighted}</span> : null}{detail?.loading ? <span>{t.detailsLoading}</span> : null}{detail?.error ? <span>{t.detailsFailed}</span> : null}{similarity !== undefined ? <span>{t.similarity} {(similarity * 100).toFixed(1)}%</span> : null}{overlap !== undefined ? <span>{t.overlap} {overlap}</span> : null}{priorityConfidenceLabel ? <span>{t.priorityConfidence} {priorityConfidenceLabel}</span> : null}</div>
         <div className="mini characterAppearances"><div>{t.characterAppearances}：</div>{displayedVns.slice(0, 4).map(([id, role], index) => <div key={`character-vn-${character.id}-${id}-${index}`}><a href={vndbUrl('v', id)} target="_blank" rel="noreferrer">{vns.get(id)?.title ?? `v${id}`}</a>（{characterRoleText(role, t)}）</div>)}</div>

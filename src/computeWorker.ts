@@ -20,18 +20,26 @@ type TraitSearchIndex = { vectors: Map<number, number>[]; postings: Map<number, 
 type ComputeParams = {
   selectedVnIds: number[];
   selectedCharacterIds: number[];
+  negativeSelectedVnIds: number[];
+  negativeSelectedCharacterIds: number[];
+  sampleWeights: number[];
+  negativeSampleWeights: number[];
   activeVnProfileSpoilerOff: [number, number][];
   activeVnProfileSpoilerOn: [number, number][];
   activeCharacterProfileSpoilerOff: [number, number][];
   activeCharacterProfileSpoilerOn: [number, number][];
   activePriorityTags: number[];
   activePriorityTraits: number[];
+  negativePriorityTagIds: number[];
+  negativePriorityTraitIds: number[];
   tagLimit: number;
   traitLimit: number;
   profileSampleRounds: number;
   includeSpoiler: boolean;
   tagSearchTags: number[];
   tagSearchTraits: number[];
+  excludedTagSearchTags: number[];
+  excludedTagSearchTraits: number[];
   tagSearchTagGroupsSpoilerOff: MetaSearchGroupRef[];
   tagSearchTagGroupsSpoilerOn: MetaSearchGroupRef[];
   tagSearchTraitGroupsSpoilerOff: MetaSearchGroupRef[];
@@ -278,17 +286,71 @@ function sampledSearchVector(vector: Map<number, number>, limit: number, meta: M
   return result;
 }
 
-function buildActiveVnProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
+function buildActiveVnProfile(selectedIds: number[], selectedWeights: number[], negativeIds: number[], negativeWeights: number[], includeSpoiler: boolean, priorityIds: Set<number>, negativePriorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
   const selected = selectedIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
   if (!selected.length) return new Map<number, number>();
-  const direct = mergeVectors(selected.map((vn) => makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, false, priorityIds)));
+  const positiveVectors = selected.map((vn, i) => {
+    const vec = makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, false, priorityIds);
+    const weight = selectedWeights[i] ?? 1.0;
+    if (weight !== 1.0) {
+      const weighted = new Map<number, number>();
+      for (const [id, value] of vec) weighted.set(id, value * weight);
+      return weighted;
+    }
+    return vec;
+  });
+  const direct = mergeVectors(positiveVectors);
+  const negative = negativeIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
+  if (negative.length) {
+    const negativeVecs = negative.map((vn, i) => {
+      const vec = makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, false, negativePriorityIds);
+      const weight = negativeWeights[i] ?? 1.0;
+      const weighted = new Map<number, number>();
+      for (const [id, value] of vec) weighted.set(id, value * weight * 0.5);
+      return weighted;
+    });
+    const negMerged = mergeVectors(negativeVecs);
+    for (const [id, value] of negMerged) {
+      const nextValue = (direct.get(id) ?? 0) - value;
+      if (nextValue > 0) direct.set(id, nextValue);
+      else direct.delete(id);
+    }
+  }
+  for (const id of negativePriorityIds) direct.delete(id);
   return sampledSearchVector(omitUnprioritizedSpecialTags(direct, tagMeta, priorityIds), limit, tagMeta, priorityIds, round, priorityIds, coverageCounts);
 }
 
-function buildActiveCharacterProfile(selectedIds: number[], includeSpoiler: boolean, priorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
+function buildActiveCharacterProfile(selectedIds: number[], selectedWeights: number[], negativeIds: number[], negativeWeights: number[], includeSpoiler: boolean, priorityIds: Set<number>, negativePriorityIds: Set<number>, limit: number, round = 0, coverageCounts = new Map<number, number>()) {
   const selected = selectedIds.map((id) => characterById.get(id)).filter(Boolean) as Character[];
   if (!selected.length) return new Map<number, number>();
-  const direct = mergeVectors(selected.map((character) => makeVector(character.traits, traitMeta, 'trait', includeSpoiler, false, priorityIds)));
+  const positiveVectors = selected.map((character, i) => {
+    const vec = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, false, priorityIds);
+    const weight = selectedWeights[i] ?? 1.0;
+    if (weight !== 1.0) {
+      const weighted = new Map<number, number>();
+      for (const [id, value] of vec) weighted.set(id, value * weight);
+      return weighted;
+    }
+    return vec;
+  });
+  const direct = mergeVectors(positiveVectors);
+  const negative = negativeIds.map((id) => characterById.get(id)).filter(Boolean) as Character[];
+  if (negative.length) {
+    const negativeVecs = negative.map((character, i) => {
+      const vec = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, false, negativePriorityIds);
+      const weight = negativeWeights[i] ?? 1.0;
+      const weighted = new Map<number, number>();
+      for (const [id, value] of vec) weighted.set(id, value * weight * 0.5);
+      return weighted;
+    });
+    const negMerged = mergeVectors(negativeVecs);
+    for (const [id, value] of negMerged) {
+      const nextValue = (direct.get(id) ?? 0) - value;
+      if (nextValue > 0) direct.set(id, nextValue);
+      else direct.delete(id);
+    }
+  }
+  for (const id of negativePriorityIds) direct.delete(id);
   return sampledSearchVector(direct, limit, traitMeta, priorityIds, round, priorityIds, coverageCounts);
 }
 
@@ -587,16 +649,23 @@ function buildDistinctProfiles(rounds: number, requestId: number, buildProfile: 
   return profiles;
 }
 
-function computeVnRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedVnIdSet: Set<number>, selectedVns: Vn[], activePriorityTags: Set<number>, requestId: number): Array<RecRef & Pick<Vn, 'rating' | 'votes'>> {
+function computeVnRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedVnIdSet: Set<number>, selectedVns: Vn[], activePriorityTags: Set<number>, negativePriorityTagIds: Set<number>, requestId: number): Array<RecRef & Pick<Vn, 'rating' | 'votes'>> {
   if (!params.selectedVnIds.length) return [];
   const rounds = Math.max(1, Math.floor(params.profileSampleRounds || 1));
-  const activeVnProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveVnProfile(params.selectedVnIds, includeSpoiler, activePriorityTags, params.tagLimit, round, coverageCounts));
+  const negativeVnIdSet = new Set(params.negativeSelectedVnIds);
+  const exclusionVisibleTagIds = new Set([...activePriorityTags, ...negativePriorityTagIds]);
+  const activeVnProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveVnProfile(params.selectedVnIds, params.sampleWeights, params.negativeSelectedVnIds, params.negativeSampleWeights, includeSpoiler, activePriorityTags, negativePriorityTagIds, params.tagLimit, round, coverageCounts));
   const lists: Array<Array<RecRef & Pick<Vn, 'rating' | 'votes'>>> = [];
   for (let index = 0; index < activeVnProfiles.length; index += 1) {
     const activeVnProfile = activeVnProfiles[index];
     postProgress(requestId, 'search', index + 1, activeVnProfiles.length);
     lists.push(topRecommendations(data!.vns
-      .filter((vn) => !selectedVnIdSet.has(vn.id) && vn.votes >= params.minVotes && !isSameCompanyPrefixDuplicate(vn, selectedVns))
+      .filter((vn) => !selectedVnIdSet.has(vn.id) && !negativeVnIdSet.has(vn.id) && vn.votes >= params.minVotes && !isSameCompanyPrefixDuplicate(vn, selectedVns))
+      .filter((vn) => {
+        if (!negativePriorityTagIds.size) return true;
+        const vector = makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, exclusionVisibleTagIds);
+        return ![...negativePriorityTagIds].some((id) => vector.has(id));
+      })
       .map((vn) => {
         const vector = omitUnprioritizedSpecialTags(makeVector(vn.tags, tagMeta, 'tag', includeSpoiler, true, activePriorityTags), tagMeta, activePriorityTags);
         const priorityMatched = priorityMatch(activePriorityTags, vector);
@@ -611,21 +680,28 @@ function computeVnRecommendations(params: ComputeParams, includeSpoiler: boolean
   return aggregateRefs(lists, (vn) => vn.similarity * 100 + (vn as RecRef & { rating?: number; votes?: number }).rating! / 10 + Math.log10((vn as RecRef & { votes?: number }).votes || 1));
 }
 
-function computeCharacterRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedCharacterIdSet: Set<number>, activePriorityTraits: Set<number>, requestId: number) {
+function computeCharacterRecommendations(params: ComputeParams, includeSpoiler: boolean, selectedCharacterIdSet: Set<number>, activePriorityTraits: Set<number>, negativePriorityTraitIds: Set<number>, requestId: number) {
   if (!params.selectedCharacterIds.length) return [];
   const rounds = Math.max(1, Math.floor(params.profileSampleRounds || 1));
+  const negativeCharacterIdSet = new Set(params.negativeSelectedCharacterIds);
+  const exclusionVisibleTraitIds = new Set([...activePriorityTraits, ...negativePriorityTraitIds]);
   const sampleProfiles = params.selectedCharacterIds
     .map((id) => characterById.get(id))
     .filter(Boolean)
     .map((character) => makeVector((character as Character).traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits));
-  const activeCharacterProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveCharacterProfile(params.selectedCharacterIds, includeSpoiler, activePriorityTraits, params.traitLimit, round, coverageCounts));
+  const activeCharacterProfiles = buildDistinctProfiles(rounds, requestId, (round, coverageCounts) => buildActiveCharacterProfile(params.selectedCharacterIds, params.sampleWeights, params.negativeSelectedCharacterIds, params.negativeSampleWeights, includeSpoiler, activePriorityTraits, negativePriorityTraitIds, params.traitLimit, round, coverageCounts));
   const referenceDeveloperIds = selectedCharacterDeveloperIds(params.selectedCharacterIds);
   const lists: Array<Array<RecRef & { score: number; character: Character; vector: Map<number, number>; consensusBonus?: number; companyBoost?: number }>> = [];
   for (let index = 0; index < activeCharacterProfiles.length; index += 1) {
     const activeCharacterProfile = activeCharacterProfiles[index];
     postProgress(requestId, 'search', index + 1, activeCharacterProfiles.length);
     const candidates = data!.characters
-      .filter((character) => !selectedCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
+      .filter((character) => !selectedCharacterIdSet.has(character.id) && !negativeCharacterIdSet.has(character.id) && characterHasQualifiedVn(character, params.minVotes))
+      .filter((character) => {
+        if (!negativePriorityTraitIds.size) return true;
+        const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, exclusionVisibleTraitIds);
+        return ![...negativePriorityTraitIds].some((id) => vector.has(id));
+      })
       .map((character) => {
         const vector = makeVector(character.traits, traitMeta, 'trait', includeSpoiler, true, activePriorityTraits);
         const priorityMatched = priorityMatch(activePriorityTraits, vector);
@@ -650,6 +726,10 @@ function computeVariant(params: ComputeParams, includeSpoiler: boolean, requestI
   const selectedVns = params.selectedVnIds.map((id) => vnById.get(id)).filter(Boolean) as Vn[];
   const activePriorityTags = new Set(params.activePriorityTags);
   const activePriorityTraits = new Set(params.activePriorityTraits);
+  const negativePriorityTagIds = new Set(params.negativePriorityTagIds ?? []);
+  const negativePriorityTraitIds = new Set(params.negativePriorityTraitIds ?? []);
+  const excludedTagSearchTagIds = new Set(params.excludedTagSearchTags ?? []);
+  const excludedTagSearchTraitIds = new Set(params.excludedTagSearchTraits ?? []);
   const tagSearchTagGroups = includeSpoiler ? params.tagSearchTagGroupsSpoilerOn : params.tagSearchTagGroupsSpoilerOff;
   const tagSearchTraitGroups = includeSpoiler ? params.tagSearchTraitGroupsSpoilerOn : params.tagSearchTraitGroupsSpoilerOff;
   const tagSearchTagAlternativeIds = new Set(params.tagSearchTags);
@@ -657,14 +737,18 @@ function computeVariant(params: ComputeParams, includeSpoiler: boolean, requestI
   const tagSearchSexualTagIds = new Set(includeSpoiler ? params.tagSearchSexualTagIdsSpoilerOn : params.tagSearchSexualTagIdsSpoilerOff);
   const tagSearchSexualTraitIds = new Set(includeSpoiler ? params.tagSearchSexualTraitIdsSpoilerOn : params.tagSearchSexualTraitIdsSpoilerOff);
 
-  const vnRecommendations = computeVnRecommendations(params, includeSpoiler, selectedVnIdSet, selectedVns, activePriorityTags, requestId);
-  const characterRecommendations = computeCharacterRecommendations(params, includeSpoiler, selectedCharacterIdSet, activePriorityTraits, requestId);
+  const vnRecommendations = computeVnRecommendations(params, includeSpoiler, selectedVnIdSet, selectedVns, activePriorityTags, negativePriorityTagIds, requestId);
+  const characterRecommendations = computeCharacterRecommendations(params, includeSpoiler, selectedCharacterIdSet, activePriorityTraits, negativePriorityTraitIds, requestId);
 
   const tagSearchIndex = includeSpoiler ? tagSearchIndexSpoilerOn : tagSearchIndexSpoilerOff;
   const tagSearchVnCandidates = !tagSearchTagGroups.length || !tagSearchIndex ? [] : [...collectCandidateIndexes(tagSearchTagGroups, tagSearchIndex.postings)]
     .map((index) => {
       const vn = data!.vns[index];
       if (vn.votes < params.minVotes) return null;
+      if (excludedTagSearchTagIds.size) {
+        const vnVector = tagSearchIndex.vectors[index];
+        if ([...excludedTagSearchTagIds].some((id) => vnVector.has(id))) return null;
+      }
       const vector = omitUnprioritizedSpecialTags(tagSearchIndex.vectors[index], tagMeta, tagSearchTagAlternativeIds);
       const priorityMatched = groupedPriorityMatch(tagSearchTagGroups, vector);
       const priorityTotal = tagSearchTagGroups.length;
@@ -682,6 +766,10 @@ function computeVariant(params: ComputeParams, includeSpoiler: boolean, requestI
     .map((index) => {
       const character = data!.characters[index];
       if (!characterHasQualifiedVn(character, params.minVotes, params.tagRoleFilter)) return null;
+      if (excludedTagSearchTraitIds.size) {
+        const charVector = traitSearchIndex.vectors[index];
+        if ([...excludedTagSearchTraitIds].some((id) => charVector.has(id))) return null;
+      }
       const vector = traitSearchIndex.vectors[index];
       const priorityMatched = groupedPriorityMatch(tagSearchTraitGroups, vector);
       const priorityTotal = tagSearchTraitGroups.length;

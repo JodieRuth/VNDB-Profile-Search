@@ -535,6 +535,8 @@ input[type="text"], input:not([type]) {
   font-size: 0.72rem;
   line-height: 1.25;
   justify-self: end;
+  margin-left: auto;
+  width: max-content;
   max-width: 100%;
   text-align: right;
 }
@@ -543,7 +545,7 @@ input[type="text"], input:not([type]) {
   border: 1px solid rgba(94, 234, 212, 0.2);
   border-radius: 18px;
   padding: 0.75rem;
-  background: rgba(15, 23, 42, 0.28);
+  background: transparent;
 }
 
 .selectedMetaTitle {
@@ -581,28 +583,6 @@ input[type="text"], input:not([type]) {
 
 .selectedMetaParents .chip {
   opacity: 0.82;
-}
-
-.resizeHandle {
-  width: max-content;
-  min-width: 9.5rem;
-  justify-self: end;
-  cursor: ns-resize;
-  touch-action: none;
-  user-select: none;
-  padding: 0.58rem 0.9rem;
-  background: linear-gradient(135deg, rgba(94, 234, 212, 0.95), rgba(125, 211, 252, 0.95));
-  color: #06111f;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
-}
-
-.resizeHandle::before {
-  content: "⤢";
-  margin-right: 0.45rem;
-  font-size: 1.05rem;
-  font-weight: 900;
 }
 
 .metaFilter {
@@ -1186,8 +1166,6 @@ h2, h3 {
 }
 
 .profileChips {
-  max-height: 245px;
-  overflow: auto;
   padding: 2px 4px 4px 0;
   margin-top: 10px;
   scrollbar-color: rgba(148, 163, 184, 0.42) transparent;
@@ -1786,7 +1764,7 @@ body:has(.themeDark) {
   border-color: rgba(100, 116, 139, 0.22);
 }
 
-.themeLight .chip:not(.sexual):not(.technical):not(.blocked):not(.spoilerLow):not(.spoilerHigh) {
+.themeLight .chip:not(.sexual):not(.technical):not(.spoilerLow):not(.spoilerHigh) {
   --chip-priority-base: #e0f2fe;
   --chip-priority-gradient: linear-gradient(135deg, rgba(56, 189, 248, 0.36), rgba(14, 165, 233, 0.22));
   --chip-priority-ring: 0 0 0 1px rgba(2, 132, 199, 0.4) inset;
@@ -1814,8 +1792,21 @@ body:has(.themeDark) {
 }
 
 .themeLight button.chip.priority:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
-  background: var(--chip-priority-gradient, linear-gradient(135deg, rgba(56, 189, 248, 0.36), rgba(14, 165, 233, 0.22))), var(--chip-priority-base, #e0f2fe);
-  box-shadow: var(--chip-priority-ring, 0 0 0 1px rgba(30, 64, 175, 0.22) inset);
+  background: var(--chip-priority-gradient, linear-gradient(135deg, rgba(34, 197, 94, 0.42), rgba(20, 184, 166, 0.24))), var(--chip-priority-base, #dcfce7);
+  color: #065f46;
+  box-shadow: var(--chip-priority-ring, 0 0 0 2px rgba(16, 185, 129, 0.32) inset, 0 0 18px rgba(16, 185, 129, 0.12));
+}
+
+.themeLight .chip.negativePriority {
+  background: linear-gradient(135deg, rgba(254, 226, 226, 0.98), rgba(254, 202, 202, 0.86));
+  color: #991b1b;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.28) inset, 0 0 18px rgba(220, 38, 38, 0.1);
+}
+
+.themeLight button.chip.priority.negativePriority:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
+  background: linear-gradient(135deg, rgba(254, 226, 226, 0.98), rgba(254, 202, 202, 0.86));
+  color: #991b1b;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.28) inset, 0 0 18px rgba(220, 38, 38, 0.1);
 }
 
 .themeLight button.chip.descendantSelected:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
@@ -1824,35 +1815,63 @@ body:has(.themeDark) {
   box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.28) inset;
 }
 
-.themeLight .chip.blocked:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
-  --chip-priority-base: #e0e7ff;
-  --chip-priority-gradient: linear-gradient(135deg, rgba(129, 140, 248, 0.34), rgba(79, 70, 229, 0.18));
-  --chip-priority-ring: 0 0 0 1px rgba(79, 70, 229, 0.38) inset;
-  background: #e0e7ff;
-  color: #3730a3;
-  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.26) inset;
+.themeLight button.chip.excludedDescendant:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
+  background: #fee2e2;
+  color: #991b1b;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.26) inset;
 }
 
-.themeLight button.chip.priority.blocked:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
-  background: var(--chip-priority-gradient, linear-gradient(135deg, rgba(129, 140, 248, 0.34), rgba(79, 70, 229, 0.18))), var(--chip-priority-base, #e0e7ff);
+.themeLight .chip.excludedMetaChip {
+  background: rgba(254, 226, 226, 0.96);
+  color: #991b1b;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.3) inset;
 }
 
-.themeLight button.chip.descendantSelected.blocked:not(.sexual):not(.spoilerLow):not(.spoilerHigh) {
-  background: linear-gradient(135deg, #ede9fe, #e0e7ff);
-  color: #5b21b6;
+.themeLight .weightControl > span {
+  color: #475569;
 }
 
-.themeLight .metaTreeLeaf {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+.themeLight .weightInput {
+  background: rgba(255, 255, 255, 0.96);
+  color: #0f172a;
+  border-color: rgba(148, 163, 184, 0.34);
 }
 
-.themeLight .localSearchList .card,
-.themeLight .selectedSampleList .card,
-.themeLight .localSearchList .traitGroup,
-.themeLight .selectedSampleList .traitGroup {
-  box-shadow: none;
+.themeLight .weightInput:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.themeLight .popover {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(148, 163, 184, 0.3);
+  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.18);
+}
+
+.themeLight .popover button {
+  background: rgba(248, 250, 252, 0.98);
+  color: #0f172a;
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.themeLight .popover button.danger {
+  background: rgba(254, 226, 226, 0.98);
+  color: #991b1b;
+}
+
+.themeLight .chip.sexual {
+  --chip-priority-base: rgba(252, 231, 243, 0.92);
+  --chip-priority-gradient: linear-gradient(135deg, rgba(244, 114, 182, 0.28), rgba(219, 39, 119, 0.16));
+  --chip-priority-ring: 0 0 0 1px rgba(219, 39, 119, 0.36) inset;
+  background: rgba(252, 231, 243, 0.92);
+  color: #831843;
+  box-shadow: 0 0 0 1px rgba(219, 39, 119, 0.28) inset;
+}
+
+.themeLight button.chip.priority.sexual {
+  background: linear-gradient(135deg, rgba(244, 114, 182, 0.34), rgba(219, 39, 119, 0.24)), var(--chip-priority-base, rgba(252, 231, 243, 0.92));
+  color: #831843;
+  box-shadow: var(--chip-priority-ring, 0 0 0 2px rgba(219, 39, 119, 0.3) inset, 0 0 18px rgba(219, 39, 119, 0.1));
 }
 
 .themeLight .chip.sexual {
@@ -1880,6 +1899,24 @@ body:has(.themeDark) {
   background: rgba(254, 226, 226, 0.96);
   color: #991b1b;
   box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.28) inset;
+}
+
+.themeLight button.chip.priority.sexual {
+  background: linear-gradient(135deg, rgba(244, 114, 182, 0.34), rgba(219, 39, 119, 0.24)), var(--chip-priority-base, rgba(252, 231, 243, 0.92));
+  color: #9d174d;
+  box-shadow: var(--chip-priority-ring, 0 0 0 2px rgba(219, 39, 119, 0.3) inset, 0 0 18px rgba(219, 39, 119, 0.1));
+}
+
+.themeLight button.chip.priority.spoilerLow {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.34), rgba(251, 191, 36, 0.28)), var(--chip-priority-base, rgba(254, 243, 199, 0.96));
+  color: #78350f;
+  box-shadow: var(--chip-priority-ring, 0 0 0 2px rgba(217, 119, 6, 0.3) inset, 0 0 18px rgba(217, 119, 6, 0.1));
+}
+
+.themeLight button.chip.priority.spoilerHigh {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.28), rgba(248, 113, 113, 0.3)), var(--chip-priority-base, rgba(254, 226, 226, 0.96));
+  color: #7f1d1d;
+  box-shadow: var(--chip-priority-ring, 0 0 0 2px rgba(220, 38, 38, 0.3) inset, 0 0 18px rgba(220, 38, 38, 0.1));
 }
 
 .themeLight .selected {
@@ -2372,5 +2409,255 @@ button.chip.selectedMetaChip.matched,
 
   .selected button {
     width: 100%;
+  }
+}
+
+.cardHeadActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.weightControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.weightControl > span {
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.weightInput {
+  width: 56px;
+  padding: 0.28rem 0.28rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.weightInput:focus {
+  outline: none;
+  border-color: #5eead4;
+  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.2);
+}
+
+.sampleReferenceList {
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.sampleReferenceList .selectedSampleList {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.negativeSamplePanel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(248, 113, 113, 0.22);
+}
+
+.negativeSamplePanel .samplePanelHead h3 {
+  color: #fca5a5;
+}
+
+.profileFullWidthPanel .profileHead {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.profileFullWidthPanel {
+  margin-top: 16px;
+}
+
+.profileByTagType {
+  display: grid;
+  gap: 10px;
+}
+
+.profileTagGroup {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 6px 7px;
+  border-radius: 14px;
+  background: transparent;
+}
+
+.profileTagGroup:nth-child(even) {
+  background: transparent;
+}
+
+.profileTagGroupLabel {
+  color: #7dd3fc;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  word-break: keep-all;
+  font-weight: 800;
+}
+
+.profileTagGroup .chips {
+  align-items: center;
+}
+
+.profileChips {
+  padding: 2px 4px 4px 0;
+  margin-top: 10px;
+  scrollbar-color: rgba(148, 163, 184, 0.42) transparent;
+  max-height: none;
+}
+
+.chip.negativePriority {
+  background: rgba(248, 113, 113, 0.24);
+  color: #fecaca;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.38) inset;
+}
+
+.chip.negativePriority::before {
+  content: '⊘';
+  font-weight: 900;
+  margin-right: 0.15em;
+}
+
+.chip.negativePriority.priority::before {
+  content: '⊘';
+}
+
+.chip.excludedMetaChip {
+  background: rgba(239, 68, 68, 0.28);
+  color: #fecaca;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.34) inset;
+}
+
+.excludedMetaBox {
+  margin-top: 8px;
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+.resizeHandle {
+  display: block;
+  width: max-content;
+  min-width: 9.5rem;
+  justify-self: end;
+  align-self: end;
+  margin-left: auto;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  padding: 0.58rem 0.9rem;
+  background: linear-gradient(135deg, rgba(94, 234, 212, 0.95), rgba(125, 211, 252, 0.95));
+  color: #06111f;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+.resizeHandle::before {
+  content: "⤢";
+  margin-right: 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.popoverOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.popover {
+  position: fixed;
+  z-index: 1001;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(12px);
+}
+
+.popover button {
+  padding: 0.42rem 0.72rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.popover button.danger {
+  background: rgba(248, 113, 113, 0.28);
+  color: #fecaca;
+}
+
+@media (max-width: 760px) {
+  .sampleReferenceList {
+    max-height: min(58vh, 520px);
+    overflow: auto;
+    padding-right: 2px;
+  }
+
+  .sampleReferenceList .selectedSampleList {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .samplePanelHead {
+    display: grid;
+    justify-items: stretch;
+    text-align: center;
+  }
+
+  .samplePanelHead .buttonRow {
+    justify-content: stretch;
+  }
+
+  .cardHeadActions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .weightControl {
+    min-width: 0;
+  }
+
+  .profileFullWidthPanel {
+    margin-top: 12px;
+  }
+
+  .profileTagGroup {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .profileTagGroupLabel {
+    line-height: 1.25;
+  }
+}
+
+@media (max-width: 460px) {
+  .cardHeadActions {
+    display: grid;
+    width: 100%;
+  }
+
+  .cardHeadActions .weightControl {
+    justify-content: center;
   }
 }
