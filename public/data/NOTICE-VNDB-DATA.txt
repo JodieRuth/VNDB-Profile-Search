@@ -17,7 +17,7 @@ This generated search index is distributed as a derived database under ODbL 1.0 
 
 This project does not include VN descriptions from db/vn.desc or character descriptions from db/chars.desc in the generated local index. Such descriptions, as well as images and other external details, may be requested from VNDB at runtime and remain subject to VNDB's terms and their respective rights holders.
 
-Chinese and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump. When these translations are included in the generated VNDB-derived search index, the generated index as a whole is provided under ODbL 1.0 where applicable.
+Chinese (Simplified and Taiwan Traditional) and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump. When these translations are included in the generated VNDB-derived search index, the generated index as a whole is provided under ODbL 1.0 where applicable.
 
 The translation text authored by this project may also be used separately under the license described in LICENSE-TRANSLATIONS.txt.
 
