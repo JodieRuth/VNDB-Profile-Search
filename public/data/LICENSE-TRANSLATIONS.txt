@@ -1,6 +1,6 @@
 Project Tag/Trait Translation License
 
-The Chinese (Simplified and Taiwan Traditional) and Japanese translations of VNDB Tag/Trait names and descriptions authored by this project are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0) when used separately from the generated VNDB-derived database.
+The Chinese (Simplified and Traditional) and Japanese translations of VNDB Tag/Trait names and descriptions authored by this project are licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0) when used separately from the generated VNDB-derived database.
 
 License text:
 https://creativecommons.org/licenses/by/4.0/
