@@ -1998,6 +1998,8 @@ function App() {
 
   useEffect(() => {
     document.documentElement.lang = uiLanguage === 'zh-TW' ? 'zh-Hant-TW' : uiLanguage === 'zh' ? 'zh-Hans-CN' : uiLanguage;
+    document.documentElement.translate = false;
+    document.documentElement.classList.add('notranslate');
   }, [uiLanguage]);
   const [minVotes, setMinVotes] = useState(() => persistedState?.minVotes ?? 50);
   const [tagLimit, setTagLimit] = useState(() => persistedState?.tagLimit ?? 12);
@@ -3715,6 +3717,8 @@ function CharacterCard({ character, vns, meta, showSexual, showSpoiler, metaLang
 }
 
 const container = document.getElementById('root')!;
+container.translate = false;
+container.classList.add('notranslate');
 const globalWithRoot = globalThis as typeof globalThis & { __vndbPrototypeRoot?: Root };
 const root = globalWithRoot.__vndbPrototypeRoot ?? createRoot(container);
 globalWithRoot.__vndbPrototypeRoot = root;
