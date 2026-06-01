@@ -22,7 +22,7 @@ See public/data/NOTICE-VNDB-DATA.txt for the data notice included with generated
 
 ## Project-authored Tag/Trait translations
 
-Chinese and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump.
+Chinese (Simplified and Taiwan Traditional) and Japanese translations of Tag/Trait names and descriptions are created by this project and are not part of the original VNDB database dump.
 
 These translation entries are provided only for research, learning, indexing, and interoperability with VNDB-derived data. VNDB Tag/Trait data may include adult, sexual, violent, disturbing, controversial, or otherwise legally restricted subject matter. Users are solely responsible for complying with all laws, platform rules, institutional policies, and local restrictions that may apply to downloading, storing, transmitting, publishing, or using such sensitive information. The maintainers do not represent, promote, endorse, normalize, or approve any specific viewpoint, conduct, fetish, depiction, political position, or value judgment reflected in the original data or in translated labels/descriptions. The translations are provided as metadata and should not be interpreted as advocacy, recommendation, or approval of the underlying content.
 

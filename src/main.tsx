@@ -27,6 +27,7 @@ type Vn = {
   tags: Pair[];
   relations: VnRelation[];
 };
+
 type Character = {
   id: number;
   name: string;
@@ -62,6 +63,8 @@ type Meta = {
   nameEncoded: boolean;
   nameZh?: string;
   nameZhEncoded?: boolean;
+  nameZhTw?: string;
+  nameZhTwEncoded?: boolean;
   nameJa?: string;
   nameJaEncoded?: boolean;
   alias: string;
@@ -70,6 +73,8 @@ type Meta = {
   descriptionEncoded?: boolean;
   descriptionZh?: string;
   descriptionZhEncoded?: boolean;
+  descriptionZhTw?: string;
+  descriptionZhTwEncoded?: boolean;
   descriptionJa?: string;
   descriptionJaEncoded?: boolean;
   parents?: number[];
@@ -106,8 +111,8 @@ type QueuedDetailRequest = {
   attempts: number;
 };
 type Mode = 'vn' | 'character' | 'tag';
-type MetaLanguage = 'zh' | 'ja' | 'origin';
-type UiLanguage = 'zh' | 'ja' | 'en';
+type MetaLanguage = 'zh' | 'zh-TW' | 'ja' | 'origin';
+type UiLanguage = 'zh' | 'zh-TW' | 'ja' | 'en';
 type ResultSort = 'relevance' | 'rating' | 'votes' | 'title' | 'confidence';
 type SortDirection = 'desc' | 'asc';
 type CharacterRoleFilter = { primary: boolean; main: boolean; side: boolean; appears: boolean };
@@ -183,7 +188,7 @@ const TAG_TREE_GROUP_ROOT_IDS = new Set([1, 20, 22, 24, 674]);
 const emptyWorkerResultVariant = (): WorkerResultVariant => ({ vnRecommendations: [], characterRecommendations: [], tagSearchVnResults: [], tagSearchCharacterResults: [], mixedTagResults: [] });
 const emptyWorkerResult = (): WorkerResult => ({ spoilerOff: emptyWorkerResultVariant(), spoilerOn: emptyWorkerResultVariant() });
 
-const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
+const UI_TEXT_BASE: Record<Exclude<UiLanguage, 'zh-TW'>, Record<string, string>> = {
   zh: {
     source: '基于 VNDB 数据源',
     themeDark: '切换黑夜模式',
@@ -641,15 +646,183 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
   }
 };
 
-const isUiLanguage = (value: unknown): value is UiLanguage => value === 'zh' || value === 'ja' || value === 'en';
+const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
+  ...UI_TEXT_BASE,
+  'zh-TW': {
+    source: '基於 VNDB 資料來源',
+    themeDark: '切換深色模式',
+    themeLight: '切換淺色模式',
+    vnMode: 'VN 搜尋',
+    characterMode: '角色搜尋',
+    tagMode: '標籤搜尋',
+    showR18: '顯示 R18 標籤名稱',
+    allowSpoiler: '允許劇透標籤',
+    metaLanguage: 'Tag/Traits',
+    uiLanguage: '語言',
+    searchVn: '搜尋 VN',
+    searchCharacter: '搜尋角色',
+    searchLocal: '搜尋本機索引',
+    localResults: '本機搜尋結果',
+    selectedSamples: '已選參考項目',
+    profile: '合成輪廓',
+    vnRecommendations: '相似 VN 推薦',
+    characterRecommendations: '相似角色推薦',
+    tagResults: 'Tag/Traits 搜尋結果',
+    candidates: '候選數量',
+    perPage: '每頁',
+    currentPage: '目前第',
+    page: '頁',
+    sort: '排序',
+    direction: '順序',
+    minVotes: '最低票數',
+    profileSampleRounds: '搜尋次數',
+    tagLimit: '搜尋前 N 個 Tag',
+    traitLimit: '搜尋前 N 個 Trait',
+    preferAverage: '依相關 VN 平均分數加權',
+    roleType: '角色類型',
+    characterAppearances: '登場作品',
+    relatedVns: '相關作品',
+    noRecommendationResults: '沒有找到符合目前條件的候選結果。請嘗試降低最低票數、放寬角色類型，或減少重點 Tag/Trait 後重新查看。',
+    primary: '主要角色',
+    main: '核心角色',
+    side: '次要角色/配角',
+    appears: '僅登場/提及',
+    previous: '上一頁',
+    next: '下一頁',
+    previousItem: '上一個',
+    nextItem: '下一個',
+    loadPage: '開始搜尋',
+    choosePage: '請設定條件後點擊開始搜尋。',
+    license: 'VNDB 資料遵循 VNDB Data License（Open Database License / Database Contents License）；圖片與外部詳情仍以 VNDB 原站記錄為準。',
+    relevance: '相似度',
+    confidence: '置信度',
+    rating: 'VN rating',
+    votes: '投票數',
+    title: '標題',
+    desc: '高到低',
+    asc: '低到高',
+    clear: '清空',
+    collapseAll: '全部收合',
+    tagPanelTitle: 'VN Tag',
+    traitPanelTitle: '角色 Traits',
+    tagPanelDesc: '選擇作品 Tag；與角色 Traits 同時選擇時會輸出作品 + 角色組合。',
+    traitPanelDesc: '選擇角色 Trait；與 VN Tag 同時選擇時會輸出作品 + 角色組合。',
+    tagFilter: '搜尋 VN Tag',
+    traitFilter: '搜尋角色 Trait',
+    showBlockedTags: '顯示 Character/Scene 標籤',
+    showTechnicalTags: '顯示技術性標籤',
+    loading: '正在載入本機 VNDB 索引……',
+    computing: '正在計算候選結果……',
+    randomizingProfile: '正在隨機化輪廓……',
+    fittingResults: '正在擬合搜尋結果……',
+    selectedMeta: '已選取',
+    parentMeta: '父層',
+    projectLinks: '專案連結',
+    readmeTitle: '使用說明',
+    githubStarFallback: 'Star',
+    githubStarHelp: '如果這個專案對你有幫助，請考慮點個 star',
+    statsVn: 'VN',
+    statsCharacters: '角色',
+    statsMeta: '標籤',
+    statsProducers: '廠商',
+    metaLanguageLabel: 'Tag/Trait 顯示語言',
+    uiLanguageLabel: '語言設定',
+    dataLastUpdated: '資料最後更新時間',
+    resizeListHeight: '拖曳調整列表高度',
+    resizeListHeightHelp: '拖曳上方按鈕可調整高度',
+    loadingDetailLoaded: '已取得',
+    loadingDetailTotal: '總大小',
+    loadingDetailSpeed: '速度',
+    loadingUnknown: '未知',
+    loadingCalculating: '計算中',
+    loadingStageReady: '準備載入本機 VNDB 索引',
+    loadingStageReadManifest: '讀取資料清單',
+    loadingStagePrepareDownload: '準備下載壓縮資料',
+    loadingStageCompressedDownloadComplete: '壓縮資料下載完成',
+    loadingStageDownloadGzip: '下載 gzip 壓縮資料',
+    loadingStageReadPlainText: '讀取未壓縮資料文字',
+    loadingStageDecompressGzip: '解壓縮 gzip 資料',
+    loadingStageParseJsonPrepare: '解壓縮完成，準備解析 JSON',
+    loadingStageParseJson: '解析 JSON 資料',
+    loadingStageDecodeFields: '解碼壓縮欄位與多語言文字',
+    loadingStageRestoreState: '還原上次選擇與篩選狀態',
+    loadingStageCommitData: '提交資料並初始化介面',
+    loadingStagePrepareIndex: '準備本機索引與搜尋介面',
+    loadingStageComplete: '載入完成',
+    errorTitle: '載入失敗',
+    errorDescription: '網頁在載入本機 VNDB 索引時發生錯誤。你可以先嘗試重新整理頁面；如果問題持續出現，請提交 issue，並附上下面的錯誤資訊。',
+    errorReload: '重新整理頁面',
+    errorSubmitIssue: '提交 issue',
+    errorStage: '失敗階段',
+    errorProgress: '載入進度',
+    errorLoaded: '已取得',
+    errorTotal: '總大小',
+    errorSpeed: '下載速度',
+    errorRenderMain: '渲染主介面',
+    errorRuntime: '網頁執行階段',
+    errorUnsupportedGzip: '目前瀏覽器不支援 gzip 解壓縮',
+    errorDataManifestPathMissing: '資料清單缺少資料檔案路徑',
+    errorDataFileReadFailed: '資料檔案讀取失敗',
+    r18Hidden: 'R18 已隱藏',
+    addSample: '加入參考',
+    remove: '移除',
+    producers: '廠商',
+    detailsLoading: '詳情載入中',
+    detailsFailed: '詳情失敗',
+    similarity: '相似',
+    overlap: '重合',
+    priorityConfidence: '重點信心',
+    associationScore: '關聯分數',
+    vnAverage: 'VN 平均分數',
+    averageWeighted: '平均分數加權',
+    combinedSimilarity: '組合相似度',
+    metaCategoryContent: '內容',
+    metaCategoryTechnical: '技術',
+    metaCategoryOther: '其他',
+    metaCategoryContentTooltip: '作品內容相關標籤，用於描述題材、設定、劇情元素與表現形式。',
+    metaCategoryR18Tooltip: 'R18 相關標籤。預設僅用於顯示，不參與搜尋；只有被選為重點標籤時才參與搜尋。',
+    metaCategoryTechnicalTooltip: '技術性標籤。預設僅顯示，不參與搜尋；只有被選為重點標籤時才參與搜尋。',
+    metaCategoryOtherTooltip: '其他未歸入主要分類的標籤。',
+    addPositiveSample: '加入正向參考',
+    addNegativeSample: '加入反向參考',
+    negativeSamples: '反向參考項目',
+    weight: '權重',
+    weightOccupy: '占用權重',
+    weightHelp: '預設 1.0 不變；調高/調低會乘入參考向量',
+    excludedMeta: '已排除',
+    negativePriority: '反向重點',
+    addPositivePriority: '正向重點',
+    addNegativePriority: '反向重點',
+    normalTags: '一般',
+    spoiler1Tags: '劇透 1',
+    spoiler2Tags: '劇透 2',
+    characterTags: 'Character',
+    sceneTags: 'Scene',
+    negativeProfile: '反向合成輪廓（向量相減）',
+  },
+};
+
+const isUiLanguage = (value: unknown): value is UiLanguage => value === 'zh' || value === 'zh-TW' || value === 'ja' || value === 'en';
+const isMetaLanguage = (value: unknown): value is MetaLanguage => value === 'zh' || value === 'zh-TW' || value === 'ja' || value === 'origin';
+const defaultUiLanguage = (): UiLanguage => {
+  const languages = typeof navigator === 'undefined' ? [] : [navigator.language, ...(navigator.languages ?? [])];
+  for (const language of languages) {
+    if (/^zh-(tw|hant|hk|mo)\b/i.test(language)) return 'zh-TW';
+    if (/^zh\b/i.test(language)) return 'zh';
+    if (/^ja\b/i.test(language)) return 'ja';
+    if (/^en\b/i.test(language)) return 'en';
+  }
+  return 'zh';
+};
+const defaultMetaLanguage = (): MetaLanguage => defaultUiLanguage() === 'zh-TW' ? 'zh-TW' : 'zh';
 const storedUiLanguage = (): UiLanguage => {
   try {
     const textValue = window.localStorage.getItem(STORAGE_KEY);
-    if (!textValue) return 'zh';
+    if (!textValue) return defaultUiLanguage();
     const value = JSON.parse(textValue) as Partial<PersistedState>;
-    return isUiLanguage(value.uiLanguage) ? value.uiLanguage : 'zh';
+    return isUiLanguage(value.uiLanguage) ? value.uiLanguage : defaultUiLanguage();
   } catch {
-    return 'zh';
+    return defaultUiLanguage();
   }
 };
 const systemPrefersDarkMode = () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
@@ -721,8 +894,8 @@ function loadPersistedState() {
       showSpoiler: booleanValue(value.showSpoiler, false),
       showBlockedTags: booleanValue(value.showBlockedTags, false),
       showTechnicalTags: booleanValue(value.showTechnicalTags, false),
-      metaLanguage: oneOf(value.metaLanguage, ['zh', 'ja', 'origin'] as const, 'zh'),
-      uiLanguage: oneOf(value.uiLanguage, ['zh', 'ja', 'en'] as const, 'zh'),
+      metaLanguage: isMetaLanguage(value.metaLanguage) ? value.metaLanguage : defaultMetaLanguage(),
+      uiLanguage: isUiLanguage(value.uiLanguage) ? value.uiLanguage : defaultUiLanguage(),
       minVotes: numberValue(value.minVotes, 50, 0),
       tagLimit: numberValue(value.tagLimit, 12, 1, 60),
       traitLimit: numberValue(value.traitLimit, 16, 1, 80),
@@ -913,6 +1086,8 @@ function decodeLocalData(data: Data): Data {
     nameEncoded: false,
     nameZh: decodeIfNeeded(metaItem.nameZh, metaItem.nameZhEncoded) ?? undefined,
     nameZhEncoded: false,
+    nameZhTw: decodeIfNeeded(metaItem.nameZhTw, metaItem.nameZhTwEncoded) ?? undefined,
+    nameZhTwEncoded: false,
     nameJa: decodeIfNeeded(metaItem.nameJa, metaItem.nameJaEncoded) ?? undefined,
     nameJaEncoded: false,
     alias: decodeIfNeeded(metaItem.alias, metaItem.aliasEncoded ?? metaItem.nameEncoded) ?? '',
@@ -921,6 +1096,8 @@ function decodeLocalData(data: Data): Data {
     descriptionEncoded: false,
     descriptionZh: decodeIfNeeded(metaItem.descriptionZh, metaItem.descriptionZhEncoded) ?? undefined,
     descriptionZhEncoded: false,
+    descriptionZhTw: decodeIfNeeded(metaItem.descriptionZhTw, metaItem.descriptionZhTwEncoded) ?? undefined,
+    descriptionZhTwEncoded: false,
     descriptionJa: decodeIfNeeded(metaItem.descriptionJa, metaItem.descriptionJaEncoded) ?? undefined,
     descriptionJaEncoded: false
   });
@@ -1357,8 +1534,16 @@ function decodedMetaField(value?: string, encoded?: boolean) {
 
 function metaName(metaItem: Meta, showSexual: boolean, language: MetaLanguage, uiLanguage: UiLanguage = 'zh') {
   if (metaItem.sexual && !showSexual) return localizedText('r18Hidden', uiLanguage);
+  if (language === 'zh-TW') {
+    return decodedMetaField(metaItem.nameZhTw, metaItem.nameZhTwEncoded)
+      ?? decodedMetaField(metaItem.nameZh, metaItem.nameZhEncoded)
+      ?? decodedMetaField(metaItem.nameJa, metaItem.nameJaEncoded)
+      ?? decodedMetaField(metaItem.name, metaItem.nameEncoded)
+      ?? '';
+  }
   if (language === 'zh') {
     return decodedMetaField(metaItem.nameZh, metaItem.nameZhEncoded)
+      ?? decodedMetaField(metaItem.nameZhTw, metaItem.nameZhTwEncoded)
       ?? decodedMetaField(metaItem.nameJa, metaItem.nameJaEncoded)
       ?? decodedMetaField(metaItem.name, metaItem.nameEncoded)
       ?? '';
@@ -1378,9 +1563,17 @@ function metaEnglishName(metaItem: Meta) {
 
 function metaTooltip(metaItem: Meta, showSexual: boolean, language: MetaLanguage, uiLanguage: UiLanguage = 'zh') {
   if (metaItem.sexual && !showSexual) return localizedText('r18Hidden', uiLanguage);
-  const descriptions = language === 'zh'
+  const descriptions = language === 'zh-TW'
+    ? [
+      decodedMetaField(metaItem.descriptionZhTw, metaItem.descriptionZhTwEncoded),
+      decodedMetaField(metaItem.descriptionZh, metaItem.descriptionZhEncoded),
+      decodedMetaField(metaItem.descriptionJa, metaItem.descriptionJaEncoded),
+      decodedMetaField(metaItem.description, metaItem.descriptionEncoded)
+    ]
+    : language === 'zh'
     ? [
       decodedMetaField(metaItem.descriptionZh, metaItem.descriptionZhEncoded),
+      decodedMetaField(metaItem.descriptionZhTw, metaItem.descriptionZhTwEncoded),
       decodedMetaField(metaItem.descriptionJa, metaItem.descriptionJaEncoded),
       decodedMetaField(metaItem.description, metaItem.descriptionEncoded)
     ]
@@ -1799,9 +1992,13 @@ function App() {
   const [showTechnicalTags, setShowTechnicalTags] = useState(() => persistedState?.showTechnicalTags ?? false);
   const [loadState, setLoadState] = useState<LoadState>({ progress: 0, stage: 'loadingStageReady', detail: null });
   const loadStateRef = useRef<LoadState>({ progress: 0, stage: 'loadingStageReady', detail: null });
-  const [metaLanguage, setMetaLanguage] = useState<MetaLanguage>(() => persistedState?.metaLanguage ?? 'zh');
-  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(() => persistedState?.uiLanguage ?? 'zh');
+  const [metaLanguage, setMetaLanguage] = useState<MetaLanguage>(() => persistedState?.metaLanguage ?? defaultMetaLanguage());
+  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(() => persistedState?.uiLanguage ?? defaultUiLanguage());
   const t = UI_TEXT[uiLanguage];
+
+  useEffect(() => {
+    document.documentElement.lang = uiLanguage === 'zh-TW' ? 'zh-Hant-TW' : uiLanguage === 'zh' ? 'zh-Hans-CN' : uiLanguage;
+  }, [uiLanguage]);
   const [minVotes, setMinVotes] = useState(() => persistedState?.minVotes ?? 50);
   const [tagLimit, setTagLimit] = useState(() => persistedState?.tagLimit ?? 12);
   const [traitLimit, setTraitLimit] = useState(() => persistedState?.traitLimit ?? 16);
@@ -2645,12 +2842,14 @@ function App() {
                 <div className="languageControlsCompact">
                   <div className="languageTools compactLanguageTools" aria-label={t.metaLanguageLabel}>
                     <span>{t.metaLanguage}</span>
+                    <button className={metaLanguage === 'zh-TW' ? 'active' : ''} onClick={() => setMetaLanguage('zh-TW')}>繁中</button>
                     <button className={metaLanguage === 'zh' ? 'active' : ''} onClick={() => setMetaLanguage('zh')}>中文</button>
                     <button className={metaLanguage === 'ja' ? 'active' : ''} onClick={() => setMetaLanguage('ja')}>日本語</button>
                     <button className={metaLanguage === 'origin' ? 'active' : ''} onClick={() => setMetaLanguage('origin')}>origin</button>
                   </div>
                   <div className="languageTools compactLanguageTools" aria-label={t.uiLanguageLabel}>
                     <span>{t.uiLanguage}</span>
+                    <button className={uiLanguage === 'zh-TW' ? 'active' : ''} onClick={() => setUiLanguage('zh-TW')}>繁中</button>
                     <button className={uiLanguage === 'zh' ? 'active' : ''} onClick={() => setUiLanguage('zh')}>中文</button>
                     <button className={uiLanguage === 'ja' ? 'active' : ''} onClick={() => setUiLanguage('ja')}>日本語</button>
                     <button className={uiLanguage === 'en' ? 'active' : ''} onClick={() => setUiLanguage('en')}>English</button>
@@ -2859,6 +3058,7 @@ function metaAllNames(metaItem: Meta) {
   return [
     decodedMetaField(metaItem.name, metaItem.nameEncoded),
     decodedMetaField(metaItem.nameZh, metaItem.nameZhEncoded),
+    decodedMetaField(metaItem.nameZhTw, metaItem.nameZhTwEncoded),
     decodedMetaField(metaItem.nameJa, metaItem.nameJaEncoded),
     decodedMetaField(metaItem.alias, metaItem.nameEncoded)
   ].filter(Boolean).join(' ').toLocaleLowerCase();
@@ -2868,6 +3068,7 @@ function metaAllDescriptions(metaItem: Meta) {
   return [
     decodedMetaField(metaItem.description, metaItem.descriptionEncoded),
     decodedMetaField(metaItem.descriptionZh, metaItem.descriptionZhEncoded),
+    decodedMetaField(metaItem.descriptionZhTw, metaItem.descriptionZhTwEncoded),
     decodedMetaField(metaItem.descriptionJa, metaItem.descriptionJaEncoded)
   ].filter(Boolean).join(' ').toLocaleLowerCase();
 }
@@ -2916,7 +3117,7 @@ function compareMetaTreeName(a: Meta, b: Meta, showSexual: boolean, language: Me
   const rightName = metaName(b, showSexual, language);
   const lengthDiff = metaSortUnitCount(leftName, language) - metaSortUnitCount(rightName, language);
   if (lengthDiff) return lengthDiff;
-  const locale = language === 'zh' ? 'zh-Hans-u-co-pinyin' : language === 'ja' ? 'ja' : 'en';
+  const locale = language === 'zh' ? 'zh-Hans-u-co-pinyin' : language === 'zh-TW' ? 'zh-Hant-TW-u-co-zhuyin' : language === 'ja' ? 'ja' : 'en';
   return leftName.localeCompare(rightName, locale, { sensitivity: 'base', numeric: true });
 }
 
@@ -3412,6 +3613,7 @@ function ProducerLinks({ producers, t }: { producers: Producer[]; t: Record<stri
 function VnRelationLabel({ relation, language }: { relation: VnRelationType; language: UiLanguage }) {
   const labels: Record<UiLanguage, Record<string, string>> = {
     zh: { seq: '续作', preq: '前作', set: '同设定', alt: '另一个版本', char: '共享角色', side: '外传', par: '本篇', ser: '同系列', fan: 'Fan disc', orig: '原作' },
+    'zh-TW': { seq: '續作', preq: '前作', set: '同設定', alt: '另一個版本', char: '共享角色', side: '外傳', par: '本篇', ser: '同系列', fan: 'Fan disc', orig: '原作' },
     ja: { seq: '続編', preq: '前作', set: '同じ設定', alt: '別バージョン', char: '共通キャラクター', side: '外伝', par: '本編', ser: '同シリーズ', fan: 'Fan disc', orig: '原作' },
     en: { seq: 'Sequel', preq: 'Prequel', set: 'Same setting', alt: 'Alternative version', char: 'Shares characters', side: 'Side story', par: 'Parent story', ser: 'Same series', fan: 'Fan disc', orig: 'Original game' }
   };

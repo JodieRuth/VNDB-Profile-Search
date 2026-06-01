@@ -5,11 +5,13 @@ import { gzipSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import OpenCC from 'opencc-js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dbRoot = join(root, '.tmp-vndb-dump', 'extract', 'db');
 const outRoot = join(root, 'public', 'data');
 const dataReleaseBaseUrl = process.env.VNDB_DATA_RELEASE_BASE_URL?.replace(/\/+$/u, '');
+const zhTwConverter = OpenCC.Converter({ from: 'cn', to: 'twp' });
 
 const bool = (value) => value === 't';
 const nil = (value) => value === '\\N' || value === undefined ? null : value;
@@ -60,7 +62,7 @@ const orderedTranslationEntry = (entry, metadataKeys = []) => {
   for (const key of metadataKeys) {
     if (Object.hasOwn(entry, key)) result[key] = entry[key];
   }
-  for (const key of ['en', 'zh', 'ja', 'enEncoded', 'zhEncoded', 'jaEncoded']) {
+  for (const key of ['en', 'zh', 'zhTw', 'ja', 'enEncoded', 'zhEncoded', 'zhTwEncoded', 'jaEncoded']) {
     if (Object.hasOwn(entry, key)) result[key] = entry[key];
   }
   for (const [key, value] of Object.entries(entry)) {
@@ -74,13 +76,13 @@ const normalizeDescriptionTranslationEntry = (entry) => orderedTranslationEntry(
 
 for (const [kind, group] of Object.entries(metaTranslations)) {
   for (const [key, entry] of Object.entries(group)) {
-    encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+    encodeTranslationEntry(entry, ['en', 'zh', 'zhTw', 'ja']);
     group[key] = normalizeMetaTranslationEntry(kind, entry);
   }
 }
 for (const group of [metaDescriptionTranslations.tags, metaDescriptionTranslations.traits]) {
   for (const [key, entry] of Object.entries(group)) {
-    encodeTranslationEntry(entry, ['en', 'zh', 'ja']);
+    encodeTranslationEntry(entry, ['en', 'zh', 'zhTw', 'ja']);
     group[key] = normalizeDescriptionTranslationEntry(entry);
   }
 }
@@ -162,10 +164,15 @@ function translatedMetaFields(kind, id) {
   if (!translated) return {};
   const result = {};
   const zh = decodedTranslationValue(translated, 'zh');
+  const zhTw = decodedTranslationValue(translated, 'zhTw') || (zh ? zhTwConverter(zh) : '');
   const ja = decodedTranslationValue(translated, 'ja');
   if (zh) {
     result.nameZh = encodedText(zh);
     result.nameZhEncoded = true;
+  }
+  if (zhTw) {
+    result.nameZhTw = encodedText(zhTw);
+    result.nameZhTwEncoded = true;
   }
   if (ja) {
     result.nameJa = encodedText(ja);
@@ -179,10 +186,15 @@ function translatedDescriptionFields(kind, id) {
   if (!translated) return {};
   const result = {};
   const zh = cleanDescription(decodedTranslationValue(translated, 'zh'));
+  const zhTw = cleanDescription(decodedTranslationValue(translated, 'zhTw')) || (zh ? cleanDescription(zhTwConverter(zh)) : '');
   const ja = cleanDescription(decodedTranslationValue(translated, 'ja'));
   if (zh) {
     result.descriptionZh = encodedText(zh);
     result.descriptionZhEncoded = true;
+  }
+  if (zhTw) {
+    result.descriptionZhTw = encodedText(zhTw);
+    result.descriptionZhTwEncoded = true;
   }
   if (ja) {
     result.descriptionJa = encodedText(ja);
