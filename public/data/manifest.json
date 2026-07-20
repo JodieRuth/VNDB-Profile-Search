@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-07-13T06:51:34.780Z",
-  "buildDateUtc8": "2026-07-13 14:51:34",
-  "dataPath": "https://raw.githubusercontent.com/JodieRuth/VNDB-Profile-Search/data-latest/public/data/vndb-prototype.d9ff8daae8e1a5f7.json.gz",
-  "sha256": "d9ff8daae8e1a5f75e6f870ee7b5e0cc6545c42d2e09eea35f786ee210f63304",
-  "size": 58167639,
+  "generatedAt": "2026-07-20T06:43:50.716Z",
+  "buildDateUtc8": "2026-07-20 14:43:50",
+  "dataPath": "https://raw.githubusercontent.com/JodieRuth/VNDB-Profile-Search/data-latest/public/data/vndb-prototype.2d92d70697200927.json.gz",
+  "sha256": "2d92d7069720092763719035f63089bfbc820f5a38ec89ffd94fa2695beee234",
+  "size": 58324788,
   "source": {
     "name": "VNDB.org database dump",
     "url": "https://vndb.org/d14"
@@ -41,11 +41,11 @@
     }
   },
   "stats": {
-    "vns": 64550,
-    "characters": 166675,
+    "vns": 64780,
+    "characters": 167091,
     "tags": 3014,
     "traits": 3327,
     "blockedTags": 1342,
-    "producers": 29224
+    "producers": 29354
   }
 }
