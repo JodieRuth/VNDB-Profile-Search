@@ -16045,6 +16045,15 @@
       "zhEncoded": true,
       "jaEncoded": true
     },
+    "1638": {
+      "vndbId": "g1638",
+      "category": "cont",
+      "sexual": false,
+      "en": "U3VkZGVuIExvdmUgSW50ZXJlc3QgQXBwZWFyYW5jZQ==",
+      "zh": "",
+      "ja": "",
+      "enEncoded": true
+    },
     "1639": {
       "vndbId": "g1639",
       "category": "cont",
@@ -33069,15 +33078,6 @@
       "category": "cont",
       "sexual": false,
       "en": "UHJvdGFnb25pc3QncyBGdWxsIEJyb3RoZXIgYXMgYSBIZXJv",
-      "zh": "",
-      "ja": "",
-      "enEncoded": true
-    },
-    "1638": {
-      "vndbId": "g1638",
-      "category": "cont",
-      "sexual": false,
-      "en": "U3VkZGVuIExvdmUgSW50ZXJlc3QgQXBwZWFyYW5jZQ==",
       "zh": "",
       "ja": "",
       "enEncoded": true
