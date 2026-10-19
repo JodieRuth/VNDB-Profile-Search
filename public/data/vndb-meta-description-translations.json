@@ -20196,6 +20196,12 @@
       "zhEncoded": true,
       "jaEncoded": true
     },
+    "3248": {
+      "en": "VGhlIGdhbWUgZmVhdHVyZXMgYSBuZWdhdGl2ZSB0cnVlIGVuZGluZyBpbiB3aGljaCB0aGUgcHJvdGFnb25pc3QgZmFpbHMgY29tcGxldGVseSwgbG9zZXMgYWxsIHRoZXkgaGF2ZSB3b3JrZWQgZm9yLCBvciBnZXRzIGRlZmVhdGVkIGJ5IHRoZWlyIHJpdmFsIG9yIGVuZW15Lg==",
+      "zh": "",
+      "ja": "",
+      "enEncoded": true
+    },
     "3249": {
       "en": "VGhlc2UgZ2FtZXMgY29udGFpbiByb21hbmNlIGJldHdlZW4gYSBmYXRoZXIgYW5kIGRhdWdodGVyLg==",
       "zh": "6L+Z5Lqb5ri45oiP5YyF5ZCr54i25Lqy5LiO5aWz5YS/5LmL6Ze055qE5oGL54ix5YWz57O744CC",
@@ -24016,12 +24022,6 @@
     },
     "4186": {
       "en": "T25lIG9mIHRoaXMgZ2FtZXMgaGVyb2VzIGlzIHByb3RhZ29uaXN0J3MgZnVsbHkgYmxvb2QtcmVsYXRlZCAoc2FtZSBtb3RoZXIgQU5EIGZhdGhlcikgYnJvdGhlci4gWW91bmdlciwgb2xkZXIgb3IgdHdpbiBkb2Vzbid0IHJlYWxseSBtYXR0ZXIu",
-      "zh": "",
-      "ja": "",
-      "enEncoded": true
-    },
-    "3248": {
-      "en": "VGhlIGdhbWUgZmVhdHVyZXMgYSBuZWdhdGl2ZSB0cnVlIGVuZGluZyBpbiB3aGljaCB0aGUgcHJvdGFnb25pc3QgZmFpbHMgY29tcGxldGVseSwgbG9zZXMgYWxsIHRoZXkgaGF2ZSB3b3JrZWQgZm9yLCBvciBnZXRzIGRlZmVhdGVkIGJ5IHRoZWlyIHJpdmFsIG9yIGVuZW15Lg==",
       "zh": "",
       "ja": "",
       "enEncoded": true
