@@ -31738,6 +31738,15 @@
       "zhEncoded": true,
       "jaEncoded": true
     },
+    "3883": {
+      "vndbId": "g3883",
+      "category": "tech",
+      "sexual": false,
+      "en": "QUktZ2VuZXJhdGVkIEJhY2tncm91bmRz",
+      "zh": "",
+      "ja": "",
+      "enEncoded": true
+    },
     "3890": {
       "vndbId": "g3890",
       "category": "cont",
@@ -33078,15 +33087,6 @@
       "category": "cont",
       "sexual": false,
       "en": "UHJvdGFnb25pc3QncyBGdWxsIEJyb3RoZXIgYXMgYSBIZXJv",
-      "zh": "",
-      "ja": "",
-      "enEncoded": true
-    },
-    "3883": {
-      "vndbId": "g3883",
-      "category": "tech",
-      "sexual": false,
-      "en": "QUktZ2VuZXJhdGVkIEJhY2tncm91bmRz",
       "zh": "",
       "ja": "",
       "enEncoded": true
